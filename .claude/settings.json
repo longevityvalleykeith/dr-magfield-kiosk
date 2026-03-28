@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(next *)",
+      "Bash(npm run build)",
+      "Bash(npm run dev)",
+      "Bash(npm run lint)",
+      "Bash(git push)",
+      "Bash(git pull)"
+    ]
+  },
+  "autoMode": {
+    "environment": [
+      "DR MAGfield Kiosk — LED screen kiosk PWA, KRPM Experience Lounge",
+      "Trusted: GitHub push to longevityvalleykeith/dr-magfield-kiosk",
+      "Trusted: localhost:3100 for Mac Mini NanoClaw MCP proxy"
+    ],
+    "allow": [
+      "Safe to run next build, next dev, and next lint",
+      "Safe to push to github.com/longevityvalleykeith/dr-magfield-kiosk",
+      "Safe to curl localhost:3100 for MCP banner endpoint testing"
+    ],
+    "soft_deny": [
+      "Ask before next build --force"
+    ]
+  }
+}
