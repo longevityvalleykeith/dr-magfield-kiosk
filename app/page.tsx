@@ -15,6 +15,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import Image from 'next/image'
 
 // ─── TYPES ──────────────────────────────────────────────────────────────
 type Message = { role: 'agent' | 'user'; text: string; time: string }
@@ -39,7 +40,7 @@ const PRODUCTS = [
     nameZh: '气血大师',
     tagline: 'Full-body rotational magnetic therapy bed',
     tag: 'Flagship',
-    icon: '🛏️',
+    icon: 'qi-master',
     stats: [
       { val: '45min', lbl: 'Per Session' },
       { val: '3-in-1', lbl: 'Heat+Mag+Vib' },
@@ -53,7 +54,7 @@ const PRODUCTS = [
     nameZh: '气血mini',
     tagline: 'Portable pelvic floor & core wellness device',
     tag: 'Portable',
-    icon: '⚡',
+    icon: 'qi-mini',
     stats: [
       { val: '15min', lbl: 'Daily' },
       { val: 'Portable', lbl: 'Take Anywhere' },
@@ -67,7 +68,7 @@ const PRODUCTS = [
     nameZh: '清肝胆排毒',
     tagline: '18-hour guided liver & gallbladder cleanse',
     tag: 'Programme',
-    icon: '🌿',
+    icon: 'liver-detox',
     stats: [
       { val: '18hrs', lbl: 'Programme' },
       { val: '5', lbl: 'Benefits' },
@@ -187,8 +188,10 @@ export default function KioskPage() {
       <div className="topbar">
         <div className="topbar-logo">
           <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-            <circle cx="20" cy="20" r="20" fill="#C9A96E"/>
-            <text x="20" y="27" textAnchor="middle" fontSize="20" fontWeight="bold" fill="#1A1A1A">M</text>
+            <circle cx="20" cy="20" r="18" fill="none" stroke="#C9A96E" strokeWidth="1.5" opacity="0.4"/>
+            <circle cx="20" cy="20" r="13" fill="none" stroke="#C9A96E" strokeWidth="1.5" opacity="0.6"/>
+            <circle cx="20" cy="20" r="8" fill="none" stroke="#C9A96E" strokeWidth="2"/>
+            <circle cx="20" cy="20" r="3" fill="#C9A96E"/>
           </svg>
           DR MAGfield Experience Lounge
         </div>
@@ -272,7 +275,22 @@ export default function KioskPage() {
                 className={`product-card ${selectedProduct === product.id ? 'selected' : ''}`}
                 onClick={() => setSelectedProduct(selectedProduct === product.id ? null : product.id)}
               >
-                <div className="product-img">{product.icon}</div>
+                <div className="product-img">
+                  {product.id === 'qi-master' ? (
+                    <Image src="/product-qi-master.png" alt={product.name} fill style={{ objectFit: 'cover' }} />
+                  ) : product.id === 'qi-mini' ? (
+                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                      <circle cx="32" cy="32" r="28" fill="rgba(122,154,126,0.15)" stroke="#7A9A7E" strokeWidth="1.5"/>
+                      <path d="M36 16L24 40h8l-4 12 12-18H32l4-18z" fill="#7A9A7E" opacity="0.9"/>
+                    </svg>
+                  ) : (
+                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                      <circle cx="32" cy="32" r="28" fill="rgba(201,169,110,0.15)" stroke="#C9A96E" strokeWidth="1.5"/>
+                      <path d="M32 14c0 0-12 8-12 20s8 16 12 16 12-4 12-16-12-20-12-20z" fill="#C9A96E" opacity="0.8"/>
+                      <path d="M32 22c0 0-6 5-6 12s3 10 6 10" stroke="#F5F0E8" strokeWidth="1.5" fill="none"/>
+                    </svg>
+                  )}
+                </div>
                 <div className="product-body">
                   <span className="product-tag">{product.tag}</span>
                   <div className="product-name">{product.name} <span style={{ color: 'var(--gold)', fontSize: 13 }}>{product.nameZh}</span></div>
@@ -290,10 +308,24 @@ export default function KioskPage() {
             ))}
 
             {/* ── BANNER DISPLAY ─────────────────────────── */}
-            {selectedProduct && (
+            {selectedProduct && (() => {
+              const sp = PRODUCTS.find(p => p.id === selectedProduct)
+              return (
               <div className="product-card selected" style={{ cursor: 'default' }}>
-                <div className="product-img" style={{ height: 120, fontSize: 32 }}>
-                  {PRODUCTS.find(p => p.id === selectedProduct)?.icon}
+                <div className="product-img" style={{ height: 120 }}>
+                  {sp?.id === 'qi-master' ? (
+                    <Image src="/product-qi-master.png" alt={sp?.name} fill style={{ objectFit: 'cover' }} />
+                  ) : sp?.id === 'qi-mini' ? (
+                    <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
+                      <circle cx="32" cy="32" r="28" fill="rgba(122,154,126,0.15)" stroke="#7A9A7E" strokeWidth="1.5"/>
+                      <path d="M36 16L24 40h8l-4 12 12-18H32l4-18z" fill="#7A9A7E" opacity="0.9"/>
+                    </svg>
+                  ) : (
+                    <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
+                      <circle cx="32" cy="32" r="28" fill="rgba(201,169,110,0.15)" stroke="#C9A96E" strokeWidth="1.5"/>
+                      <path d="M32 14c0 0-12 8-12 20s8 16 12 16 12-4 12-16-12-20-12-20z" fill="#C9A96E" opacity="0.8"/>
+                    </svg>
+                  )}
                 </div>
                 <div className="product-body">
                   <div className="product-name" style={{ fontSize: 15 }}>
@@ -331,7 +363,8 @@ export default function KioskPage() {
                   </div>
                 </div>
               </div>
-            )}
+            );
+          })()}
           </div>
         </div>
       </div>

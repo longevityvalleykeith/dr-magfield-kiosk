@@ -47,7 +47,9 @@ body {
   gap: 14px;
   color: var(--white);
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 800;
+  font-family: 'Montserrat', sans-serif;
+  letter-spacing: -0.3px;
 }
 .topbar-status {
   display: flex;
