@@ -29,7 +29,7 @@ const MCP_ENDPOINT = process.env.NEXT_PUBLIC_MCP_ENDPOINT ?? 'http://localhost:3
 // ─── BRAND CONSTANTS ───────────────────────────────────────────────────
 const AGENT_NAME = 'DR MAGfield AI'
 const AGENT_TITLE = 'Your Recovery Guide'
-const ARIE_WHATSAPP = '60123778391'
+const ARIE_WHATSAPP = '60126595319'
 const TELEGRAM_BOT = '@DrMAGfield_Bot'
 
 // ─── STATIC PRODUCT DATA (seeded from Brand DNA) ─────────────────────
@@ -90,7 +90,7 @@ const MOCK_RESPONSES: Record<string, string> = {
   default: 'Our Qi Master therapy bed is perfect for golfers — 30 minutes on the bed and most clients feel measurable relief in back and shoulder tension. Would you like me to check availability with Arie?',
   price: 'Sessions start from RM 50 for members of KRPM. Your first session includes a complimentary consultation. Would you like to book with Arie via WhatsApp?',
   location: 'We\'re at the KRPM Experience Lounge, Kelab Rahman Putra Malaysia, Sungai Buloh. Members and guests are welcome by appointment.',
-  booking: 'Great! Arie Ong is our Experience Coordinator. You can WhatsApp him directly at +6012-377 8391 — he\'ll set up your first session.',
+  booking: 'Great! Arie Ong is our Experience Coordinator. You can WhatsApp him directly at +6012-659 5319 — he\'ll set up your first session.',
   golf: 'Golfers love the Qi Master! The rotating magnetic field addresses exactly what repetitive swings do to your back and shoulders. Most KRPM members come 2-3 times per week.',
   time: 'Sessions are 30-45 minutes. Many golfers do a pre-round session (20 min) 1-2 hours before teeing off, and a longer recovery session after the round.',
 }
@@ -379,7 +379,7 @@ export default function KioskPage() {
         <div className="bottombar-item">
           <div className="icon">&#128172;</div>
           <div>WhatsApp</div>
-          <div className="val">+6012-377 8391</div>
+          <div className="val">+6012-659 5319</div>
         </div>
         <div className="bottombar-item">
           <div className="icon">&#128722;</div>

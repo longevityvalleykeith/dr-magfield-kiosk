@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Manrope:wght@300;400;500;700&family=Montserrat:wght@400;800&display=swap');
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -18,7 +20,7 @@ html, body {
 }
 
 body {
-  font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  font-family: 'Manrope', 'Inter', system-ui, sans-serif;
   color: var(--white);
   -webkit-font-smoothing: antialiased;
 }
@@ -240,7 +242,7 @@ body {
   padding: 14px 18px;
   font-size: 15px;
   color: var(--white);
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Manrope', sans-serif;
   outline: none;
   transition: border-color 0.2s;
 }
@@ -352,7 +354,7 @@ body {
   background: rgba(255,255,255,0.04);
   color: rgba(255,255,255,0.7);
   font-size: 13px;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Manrope', sans-serif;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
