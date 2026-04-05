@@ -15,15 +15,24 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import Image from 'next/image'
+import {
+  MapPin, MessageCircle, Send, Clock,
+  Heart, Zap,
+  CheckCircle, ChevronRight, Menu, X
+} from 'lucide-react'
+import QRCode from 'qrcode'
 
 // ─── TYPES ──────────────────────────────────────────────────────────────
 type Message = { role: 'agent' | 'user'; text: string; time: string }
 type ConnectionStatus = 'online' | 'offline' | 'connecting'
 
-// ─── MCP CONFIG ────────────────────────────────────────────────────────
-// Mac Mini NanoClaw MCP proxy — serves Agent 0 over Tailscale
-// Set VERCEL_URL or use Tailscale IP:PORT for local
+// ─── KIOSK API CONFIG ─────────────────────────────────────────────────
+// Mothership /api/kiosk/session endpoint — handles text + audio responses
+const KIOSK_API_URL = process.env.NEXT_PUBLIC_KIOSK_API_URL ?? '/api/kiosk/session'
+const DR_MAGFIELD_TENANT_ID = '3cc281be-aafc-4579-9edf-521659306145'
+
+// ─── BANNER API CONFIG ────────────────────────────────────────────────
+// NanoClaw Kiosk API on Mac Mini Tailscale — serves branded banners
 const MCP_ENDPOINT = process.env.NEXT_PUBLIC_MCP_ENDPOINT ?? 'http://localhost:3100'
 
 // ─── BRAND CONSTANTS ───────────────────────────────────────────────────
@@ -31,6 +40,10 @@ const AGENT_NAME = 'DR MAGfield AI'
 const AGENT_TITLE = 'Your Recovery Guide'
 const ARIE_WHATSAPP = '60126595319'
 const TELEGRAM_BOT = '@DrMAGfield_Bot'
+const QI_MASTER_IMG = 'https://wlwzfjlvwaosonorsvyf.supabase.co/storage/v1/object/public/brand-assets/dr-magfield/qi-master.jpg'
+const QI_MINI_IMG = 'https://wlwzfjlvwaosonorsvyf.supabase.co/storage/v1/object/public/brand-assets/dr-magfield/qi-mini-correct.jpg'
+// Official DR MAGfield logo (Keith's archive — transparent PNG)
+const LOGO_URL = 'https://wlwzfjlvwaosonorsvyf.supabase.co/storage/v1/object/public/brand-assets/dr-magfield/logo-nav-400.png'
 
 // ─── STATIC PRODUCT DATA (seeded from Brand DNA) ─────────────────────
 const PRODUCTS = [
@@ -52,7 +65,7 @@ const PRODUCTS = [
     id: 'qi-mini',
     name: 'Qi Mini',
     nameZh: '气血mini',
-    tagline: 'Portable pelvic floor & core wellness device',
+    tagline: 'Portable targeted therapy for muscle & joint recovery',
     tag: 'Portable',
     icon: 'qi-mini',
     stats: [
@@ -62,27 +75,13 @@ const PRODUCTS = [
     ],
     desc: 'Targeted pelvic floor and core wellness technology. The circulating energy waves strengthen your body\'s foundation — ideal for golfers who sit long hours between rounds.',
   },
-  {
-    id: 'liver-detox',
-    name: 'Liver Detox',
-    nameZh: '清肝胆排毒',
-    tagline: '18-hour guided liver & gallbladder cleanse',
-    tag: 'Programme',
-    icon: 'liver-detox',
-    stats: [
-      { val: '18hrs', lbl: 'Programme' },
-      { val: '5', lbl: 'Benefits' },
-      { val: 'RM50', lbl: 'Members' },
-    ],
-    desc: 'European-formulated liver and gallbladder detoxification programme. DR MAGfield\'s guided 2-day protocol helps flush accumulated toxins, restore liver function, and improve energy and mental clarity.',
-  },
 ]
 
 // ─── INITIAL CONVERSATION (onboarding script) ──────────────────────────
 const ONBOARDING: Message[] = [
-  { role: 'agent', text: '👋 Welcome to DR MAGfield — Malaysia\'s First Golf Club Bio-Energetic Therapy Lounge.', time: '' },
+  { role: 'agent', text: 'Welcome to DR MAGfield — Malaysia\'s First Golf Club Bio-Energetic Therapy Lounge.', time: '' },
   { role: 'agent', text: 'I\'m your AI recovery guide. Tell me — what brings you in today?', time: '' },
-  { role: 'agent', text: '🏌️ Back pain from golf? 🦵 Hip tightness? 😴 Recovery from a tournament? Let me help you find the right therapy.', time: '' },
+  { role: 'agent', text: 'Back pain from golf? Hip tightness? Recovery from a tournament? Let me help you find the right therapy.', time: '' },
 ]
 
 // ─── MOCK AGENT RESPONSES (when MCP offline) ─────────────────────────
@@ -120,9 +119,16 @@ export default function KioskPage() {
   const [activeBanner, setActiveBanner] = useState(0)
   const [isTyping, setIsTyping] = useState(false)
   const [bannerHtml, setBannerHtml] = useState<string | null>(null)
+  const [telegramQr, setTelegramQr] = useState<string | null>(null)
+  const [patientName, setPatientName] = useState('')
+  const [showNamePrompt, setShowNamePrompt] = useState(true)
+  const [welcomeBanner, setWelcomeBanner] = useState<string | null>(null)
+  const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const bannerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const isFirstMessage = useRef(true)
 
   // ── Auto-scroll conversation ─────────────────────────────────────
   useEffect(() => {
@@ -130,6 +136,15 @@ export default function KioskPage() {
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight
     }
   }, [messages, isTyping])
+
+  // ── Generate Telegram QR on mount ─────────────────────────────────
+  useEffect(() => {
+    QRCode.toDataURL('https://t.me/DrMAGfield_Bot?start=krpm', {
+      width: 200,
+      margin: 2,
+      color: { dark: '#2D3748', light: '#F5F0E8' },
+    }).then(setTelegramQr).catch(() => {})
+  }, [])
 
   // ── Auto-rotate banners every 8 seconds ────────────────────────────
   useEffect(() => {
@@ -142,7 +157,7 @@ export default function KioskPage() {
   // ── Fetch generated banner from Agent 0 (via local MCP proxy) ─────
   const fetchBanner = useCallback(async (productId: string) => {
     try {
-      const res = await fetch(`${MCP_ENDPOINT}/api/banner/${productId}`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_MCP_ENDPOINT ?? 'http://localhost:3100'}/api/banner/${productId}`, {
         signal: AbortSignal.timeout(5000),
       })
       if (res.ok) {
@@ -164,15 +179,59 @@ export default function KioskPage() {
     setMessages(prev => [...prev, userMsg])
     setInput('')
     setIsTyping(true)
+    setStatus('connecting')
+    setAudioUrl(null)
 
-    // Simulate Agent 0 thinking (when MCP offline, use mock)
-    setTimeout(() => {
-      setIsTyping(false)
+    try {
+      const mode = isFirstMessage.current ? 'greet' : 'respond'
+      isFirstMessage.current = false
+
+      const response = await fetch(KIOSK_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: DR_MAGFIELD_TENANT_ID,
+          patientName: patientName.trim() || 'Guest',
+          query: text,
+          mode,
+        }),
+      })
+
+      if (!response.ok) throw new Error(`API error: ${response.status}`)
+
+      const data = await response.json()
+      const { text: agentText, audioUrl: returnedAudioUrl, patient } = data
+
+      // Play voice audio (Keith's clone) if returned
+      if (returnedAudioUrl) {
+        const audio = new Audio(returnedAudioUrl)
+        audioRef.current = audio
+        setAudioUrl(returnedAudioUrl)
+        audio.play().catch(() => {
+          // Audio autoplay may be blocked — user must interact first
+        })
+      }
+
+      // Show patient recognition banner
+      if (patient?.recognized && patient.name) {
+        setWelcomeBanner(`Welcome back, ${patient.name}!`)
+        setTimeout(() => setWelcomeBanner(null), 4000)
+      }
+
+      const agentMsg: Message = { role: 'agent', text: agentText, time: formatTime() }
+      setMessages(prev => [...prev, agentMsg])
+      setStatus('online')
+    } catch (err) {
+      console.error('[kiosk] Session error:', err)
+      setStatus('offline')
+      // Fallback to mock response
       const response = getMockResponse(text)
       const agentMsg: Message = { role: 'agent', text: response, time: formatTime() }
       setMessages(prev => [...prev, agentMsg])
-    }, 1200 + Math.random() * 800)
-  }, [input])
+    } finally {
+      setIsTyping(false)
+    }
+  }, [input, patientName])
 
   // ── Quick action shortcuts ─────────────────────────────────────────
   const quickActions = [
@@ -187,12 +246,8 @@ export default function KioskPage() {
       {/* ── TOP BAR ──────────────────────────────────────────────── */}
       <div className="topbar">
         <div className="topbar-logo">
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-            <circle cx="20" cy="20" r="18" fill="none" stroke="#C9A96E" strokeWidth="1.5" opacity="0.4"/>
-            <circle cx="20" cy="20" r="13" fill="none" stroke="#C9A96E" strokeWidth="1.5" opacity="0.6"/>
-            <circle cx="20" cy="20" r="8" fill="none" stroke="#C9A96E" strokeWidth="2"/>
-            <circle cx="20" cy="20" r="3" fill="#C9A96E"/>
-          </svg>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={LOGO_URL} alt="DR MAGfield" style={{ width: 44, height: 44, objectFit: 'contain' }} />
           DR MAGfield Experience Lounge
         </div>
         <div className="topbar-status">
@@ -209,10 +264,60 @@ export default function KioskPage() {
         {/* ── AGENT PANEL (LEFT) ──────────────────────────────── */}
         <div className="agent-panel">
           <div className="agent-header">
-            <div className="agent-avatar">AI</div>
-            <div className="agent-name">{AGENT_NAME}</div>
-            <div className="agent-title">{AGENT_TITLE} — Kelab Rahman Putra Malaysia</div>
+            <div className="agent-header-row">
+              <div className="agent-avatar">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={LOGO_URL} alt="DR MAGfield" style={{ width: 52, height: 52, objectFit: 'contain' }} />
+              </div>
+              <div className="agent-info">
+                <div className="agent-name">{AGENT_NAME}</div>
+                <div className="agent-title">{AGENT_TITLE} — Kelab Rahman Putra Malaysia</div>
+              </div>
+              {telegramQr && (
+                <div className="telegram-qr">
+                  <img src={telegramQr} alt="Telegram QR" width={64} height={64} style={{ borderRadius: 8 }} />
+                  <span style={{ fontSize: 10, color: 'rgba(201,169,110,0.6)', marginTop: 4 }}>Scan to Chat</span>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Welcome back banner */}
+          {welcomeBanner && (
+            <div className="welcome-banner">
+              <CheckCircle size={16} strokeWidth={2} />
+              {welcomeBanner}
+            </div>
+          )}
+
+          {/* Patient name input — shown before chat starts */}
+          {showNamePrompt && (
+            <div className="name-prompt">
+              <div className="name-prompt-label">Your name (optional)</div>
+              <div className="name-prompt-row">
+                <input
+                  className="name-input"
+                  placeholder="e.g. Ahmad"
+                  value={patientName}
+                  onChange={e => setPatientName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && setShowNamePrompt(false)}
+                  autoFocus
+                />
+                <button
+                  className="name-start-btn"
+                  onClick={() => setShowNamePrompt(false)}
+                >
+                  Start Chat
+                </button>
+              </div>
+              <button
+                className="name-skip-btn"
+                onClick={() => setShowNamePrompt(false)}
+              >
+                Continue as Guest
+              </button>
+            </div>
+          )}
 
           {/* Conversation */}
           <div className="conversation" ref={conversationRef}>
@@ -275,20 +380,15 @@ export default function KioskPage() {
                 className={`product-card ${selectedProduct === product.id ? 'selected' : ''}`}
                 onClick={() => setSelectedProduct(selectedProduct === product.id ? null : product.id)}
               >
-                <div className="product-img">
+                <div className="product-img" style={{ position: 'relative', overflow: 'hidden' }}>
                   {product.id === 'qi-master' ? (
-                    <Image src="/product-qi-master.png" alt={product.name} fill style={{ objectFit: 'cover' }} />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={QI_MASTER_IMG} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : product.id === 'qi-mini' ? (
-                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-                      <circle cx="32" cy="32" r="28" fill="rgba(122,154,126,0.15)" stroke="#7A9A7E" strokeWidth="1.5"/>
-                      <path d="M36 16L24 40h8l-4 12 12-18H32l4-18z" fill="#7A9A7E" opacity="0.9"/>
-                    </svg>
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={QI_MINI_IMG} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
-                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-                      <circle cx="32" cy="32" r="28" fill="rgba(201,169,110,0.15)" stroke="#C9A96E" strokeWidth="1.5"/>
-                      <path d="M32 14c0 0-12 8-12 20s8 16 12 16 12-4 12-16-12-20-12-20z" fill="#C9A96E" opacity="0.8"/>
-                      <path d="M32 22c0 0-6 5-6 12s3 10 6 10" stroke="#F5F0E8" strokeWidth="1.5" fill="none"/>
-                    </svg>
+                    <Heart size={56} strokeWidth={1.5} color="#C9A96E" />
                   )}
                 </div>
                 <div className="product-body">
@@ -312,19 +412,15 @@ export default function KioskPage() {
               const sp = PRODUCTS.find(p => p.id === selectedProduct)
               return (
               <div className="product-card selected" style={{ cursor: 'default' }}>
-                <div className="product-img" style={{ height: 120 }}>
+                <div className="product-img" style={{ height: 160, position: 'relative', overflow: 'hidden' }}>
                   {sp?.id === 'qi-master' ? (
-                    <Image src="/product-qi-master.png" alt={sp?.name} fill style={{ objectFit: 'cover' }} />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={QI_MASTER_IMG} alt={sp?.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : sp?.id === 'qi-mini' ? (
-                    <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
-                      <circle cx="32" cy="32" r="28" fill="rgba(122,154,126,0.15)" stroke="#7A9A7E" strokeWidth="1.5"/>
-                      <path d="M36 16L24 40h8l-4 12 12-18H32l4-18z" fill="#7A9A7E" opacity="0.9"/>
-                    </svg>
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={QI_MINI_IMG} alt={sp?.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
-                    <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
-                      <circle cx="32" cy="32" r="28" fill="rgba(201,169,110,0.15)" stroke="#C9A96E" strokeWidth="1.5"/>
-                      <path d="M32 14c0 0-12 8-12 20s8 16 12 16 12-4 12-16-12-20-12-20z" fill="#C9A96E" opacity="0.8"/>
-                    </svg>
+                    <Heart size={48} strokeWidth={1.5} color="#C9A96E" />
                   )}
                 </div>
                 <div className="product-body">
@@ -345,7 +441,7 @@ export default function KioskPage() {
                         borderRadius: 10, fontSize: 13, fontWeight: 700, textDecoration: 'none',
                       }}
                     >
-                      &#128172; WhatsApp Arie
+                      <MessageCircle size={16} strokeWidth={2} /> WhatsApp Arie
                     </a>
                     <a
                       href="https://t.me/DrMAGfield_Bot"
@@ -358,7 +454,7 @@ export default function KioskPage() {
                         border: '1px solid rgba(201,169,110,0.3)',
                       }}
                     >
-                      &#128722; Chat with AI Agent
+                      <Send size={16} strokeWidth={2} /> Chat with AI Agent
                     </a>
                   </div>
                 </div>
@@ -372,22 +468,22 @@ export default function KioskPage() {
       {/* ── BOTTOM BAR ──────────────────────────────────────────── */}
       <div className="bottombar">
         <div className="bottombar-item">
-          <div className="icon">&#128205;</div>
+          <MapPin size={22} strokeWidth={1.5} />
           <div>Location</div>
           <div className="val">KRPM</div>
         </div>
         <div className="bottombar-item">
-          <div className="icon">&#128172;</div>
+          <MessageCircle size={22} strokeWidth={1.5} />
           <div>WhatsApp</div>
           <div className="val">+6012-659 5319</div>
         </div>
         <div className="bottombar-item">
-          <div className="icon">&#128722;</div>
+          <Send size={22} strokeWidth={1.5} />
           <div>Telegram</div>
           <div className="val">@DrMAGfield_Bot</div>
         </div>
         <div className="bottombar-item">
-          <div className="icon">&#128339;</div>
+          <Clock size={22} strokeWidth={1.5} />
           <div>Hours</div>
           <div className="val">By Appt</div>
         </div>
@@ -397,8 +493,14 @@ export default function KioskPage() {
       {selectedProduct && (
         <div className="modal-overlay" onClick={() => setSelectedProduct(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>
-              {PRODUCTS.find(p => p.id === selectedProduct)?.icon}
+            <div style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 24, aspectRatio: '16/9', background: 'rgba(201,169,110,0.06)' }}>
+              {selectedProduct === 'qi-master' ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={QI_MASTER_IMG} alt="Qi Master" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : selectedProduct === 'qi-mini' ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={QI_MINI_IMG} alt="Qi Mini" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : null}
             </div>
             <div className="modal-product-name">
               {PRODUCTS.find(p => p.id === selectedProduct)?.name}
@@ -425,7 +527,7 @@ export default function KioskPage() {
                 rel="noopener"
                 className="modal-cta"
               >
-                &#128172; Book with Arie Ong &#8594;
+                <MessageCircle size={16} strokeWidth={2} /> Book with Arie Ong &#8594;
               </a>
               <a
                 href="https://t.me/DrMAGfield_Bot"
@@ -439,7 +541,7 @@ export default function KioskPage() {
                   fontWeight: 700, fontSize: 15, textDecoration: 'none',
                 }}
               >
-                &#128722; Chat with AI Agent
+                <Send size={16} strokeWidth={2} /> Chat with AI Agent
               </a>
             </div>
           </div>
