@@ -4,7 +4,11 @@
  * 3-tap flow (variant B per design system DR-MAGfield-Rabbit-Cup.html):
  *   1. Identity (name + WhatsApp + email)
  *   2. Zone (where it hurts — body region picker, vertebra-free)
- *   3. Confirm + pay (RM325 5+1 on-demand pack, slot TBC)
+ *   3. Confirm + pay (RM325 5+1 on-demand pack, slot TBC) — the consent
+ *      checkbox CONSTRUCTS the pay CTA (unconsented submission is
+ *      unrepresentable), and the returned provisional_id is persisted to
+ *      sessionStorage so /rabbit-cup/success renders the Receipt Block
+ *      after the Stripe round-trip.
  *
  * Wired services:
  *   - POST /api/register  (proxied to LV main /api/tenants/dr-magfield/rabbit-cup/register)
@@ -51,11 +55,16 @@ export default function RabbitCupPage() {
   const [email, setEmail] = useState('');
   const [zone, setZone] = useState<ZoneId | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  // Consent Gate: the checkbox CONSTRUCTS the pay CTA — unconsented submission
+  // is unrepresentable (button disabled AND handleSubmit refuses).
+  const [consented, setConsented] = useState(false);
+  const [provisionalId, setProvisionalId] = useState<string | null>(null);
 
   const identityValid = name.trim().length > 1 && /^\+?60\d{8,}$/.test(whatsapp.replace(/[\s-]/g, '')) && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
   const activeZone = zone ? ZONES.find((z) => z.id === zone) : null;
 
   async function handleSubmit() {
+    if (!consented) return; // Consent Gate — unrepresentable without the checkbox
     setStep('submitting');
     setErrorMsg('');
     try {
@@ -73,7 +82,7 @@ export default function RabbitCupPage() {
           zone_segment: activeZone?.seg,
           package: 'rm325-5plus1-on-demand',
           slot: 'tbc',
-          consent_acknowledged: true,
+          consent_acknowledged: consented,
         }),
       });
       if (!res.ok) {
@@ -81,6 +90,24 @@ export default function RabbitCupPage() {
         throw new Error(`Registration failed (${res.status}): ${txt.slice(0, 200) || 'no detail'}`);
       }
       const data = (await res.json()) as { checkout_url?: string; provisional_id?: string };
+      if (data.provisional_id) {
+        setProvisionalId(data.provisional_id);
+        // Receipt survives the Stripe round-trip so /rabbit-cup/success can
+        // render the registration code (Receipt Block law).
+        try {
+          sessionStorage.setItem(
+            'drmf_rc_receipt',
+            JSON.stringify({
+              provisional_id: data.provisional_id,
+              name: name.trim(),
+              zone_label: activeZone?.label ?? null,
+              at: new Date().toISOString(),
+            }),
+          );
+        } catch {
+          /* storage unavailable — success page shows its honest UNMEASURED state */
+        }
+      }
       if (data.checkout_url) {
         // Stripe Checkout — full-page redirect
         window.location.assign(data.checkout_url);
@@ -173,14 +200,31 @@ export default function RabbitCupPage() {
               <SummaryRow label="Email" value={email.trim().toLowerCase()} />
               <SummaryRow label="Recovery zone" value={activeZone?.label ?? '—'} />
               <SummaryRow label="Package" value={`${PRICE_PACK_LABEL} · 5 + 1 on-demand`} />
-              <SummaryRow label="Slot" value="To be confirmed (Arie within 1 hour)" />
+              <SummaryRow label="Slot" value="reserved · later — Arie confirms within 1 hour" pending />
             </div>
-            <p style={S.fineprint}>
-              By continuing you authorise a one-time {PRICE_PACK_LABEL} charge via Stripe. Sessions are bookable on demand at KRPM Experience Lounge. Sports-recovery service, not medical. Cancellable per terms.
-            </p>
+            {/* Consent Gate — the checkbox constructs the CTA */}
+            <label style={S.consentRow}>
+              <input
+                type="checkbox"
+                checked={consented}
+                onChange={(e) => setConsented(e.target.checked)}
+                style={S.consentBox}
+              />
+              <span style={S.consentText}>
+                I authorise a one-time {PRICE_PACK_LABEL} charge via Stripe and agree DR MAGfield may
+                hold my contact details to arrange sessions at the KRPM Experience Lounge.
+                Sports-recovery service, not medical. Cancellable per terms.
+              </span>
+            </label>
             <div style={S.btnRow}>
               <button style={{ ...S.btn, ...S.btnGhost }} onClick={() => setStep('zone')}>← Back</button>
-              <button style={{ ...S.btn, ...S.btnPrimary }} onClick={handleSubmit}>Pay {PRICE_PACK_LABEL} →</button>
+              <button
+                style={{ ...S.btn, ...(consented ? S.btnPrimary : S.btnDisabled) }}
+                onClick={handleSubmit}
+                disabled={!consented}
+              >
+                Pay {PRICE_PACK_LABEL} →
+              </button>
             </div>
           </section>
         )}
@@ -198,8 +242,19 @@ export default function RabbitCupPage() {
           <section style={S.card}>
             <h3 style={S.stepH}>See you at the lounge, {name.split(' ')[0] || 'champion'}.</h3>
             <p style={S.cardSub}>
-              Provisional booking captured. Arie will confirm your slot within 1 hour via WhatsApp. Receipt sent to {email}.
+              Registration recorded. Payment is <em style={S.pendingWord}>settled · later</em> — Arie will
+              confirm your slot within 1 hour via WhatsApp.
             </p>
+            {provisionalId && (
+              <div style={S.receiptBlock}>
+                <div style={S.receiptLabel}>Registration receipt</div>
+                <div style={S.receiptCode}>{provisionalId}</div>
+                <p style={S.receiptNote}>
+                  This record cannot be quietly edited. Quote this code to Arie — or to any
+                  assistant — and the engine will confirm it happened.
+                </p>
+              </div>
+            )}
             <a href={waConfirmLink} style={{ ...S.btn, ...S.btnWa }} target="_blank" rel="noreferrer">Message Arie on WhatsApp →</a>
           </section>
         )}
@@ -249,11 +304,12 @@ function Pip({ on, label }: { on: boolean; label: string }) {
   return <div style={{ ...S.pip, ...(on ? S.pipOn : {}) }}>{label}</div>;
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, value, pending }: { label: string; value: string; pending?: boolean }) {
+  // Color law: pending renders italic and UNCOLORED — never the verified tone.
   return (
     <div style={S.sumRow}>
       <span style={S.sumLabel}>{label}</span>
-      <span style={S.sumValue}>{value}</span>
+      <span style={{ ...S.sumValue, ...(pending ? S.sumValuePending : {}) }}>{value}</span>
     </div>
   );
 }
@@ -309,7 +365,16 @@ const S: Record<string, React.CSSProperties> = {
   sumRow: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px dashed ${PAPER_DEEP}`, gap: 12 },
   sumLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: GOLD_DEEP },
   sumValue: { fontSize: 13, color: INK_700, textAlign: 'right' as const, maxWidth: '60%' },
+  sumValuePending: { fontStyle: 'italic' as const, color: INK_500, fontWeight: 400 },
+  pendingWord: { fontStyle: 'italic' as const, color: INK_500, fontWeight: 500 },
   fineprint: { fontSize: 11, lineHeight: 1.5, color: INK_400, margin: '0 0 16px' },
+  consentRow: { display: 'flex', gap: 10, alignItems: 'flex-start', margin: '0 0 16px', cursor: 'pointer' },
+  consentBox: { width: 18, height: 18, marginTop: 2, accentColor: GOLD, flexShrink: 0, cursor: 'pointer' },
+  consentText: { fontSize: 11, lineHeight: 1.5, color: INK_500 },
+  receiptBlock: { background: PAPER_SOFT, border: `1.5px solid ${GOLD_SOFT}`, borderRadius: 12, padding: 16, margin: '0 0 14px' },
+  receiptLabel: { fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' as const, color: GOLD_DEEP, marginBottom: 6 },
+  receiptCode: { fontFamily: "'SFMono-Regular', Consolas, 'Liberation Mono', monospace", fontSize: 14, fontWeight: 600, color: INK_700, wordBreak: 'break-all' as const, marginBottom: 8 },
+  receiptNote: { fontSize: 11, lineHeight: 1.5, color: INK_400, margin: 0 },
   foot: { padding: '20px 24px', borderTop: `1px solid ${PAPER_DEEP}`, fontSize: 11, color: INK_400, textAlign: 'center' as const },
   footQuiet: { fontFamily: F_DISPLAY, fontStyle: 'italic', color: GOLD_DEEP, marginTop: 4 },
 };
