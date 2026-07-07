@@ -86,8 +86,16 @@ export default function RabbitCupPage() {
         }),
       });
       if (!res.ok) {
+        // Surface the middleware's human sentence, never a raw JSON blob
+        // (Headless Law — live-probe finding 2026-07-07).
         const txt = await res.text().catch(() => '');
-        throw new Error(`Registration failed (${res.status}): ${txt.slice(0, 200) || 'no detail'}`);
+        let human = '';
+        try {
+          human = String((JSON.parse(txt) as { error?: unknown }).error ?? '');
+        } catch {
+          /* body was not JSON — fall through to the status line */
+        }
+        throw new Error(human || `Registration failed (${res.status}): ${txt.slice(0, 200) || 'no detail'}`);
       }
       const data = (await res.json()) as { checkout_url?: string; provisional_id?: string };
       if (data.provisional_id) {
