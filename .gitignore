@@ -3,3 +3,6 @@ node_modules
 .env*.local
 __MACOSX
 .vercel
+
+# TypeScript incremental build artifact
+tsconfig.tsbuildinfo
