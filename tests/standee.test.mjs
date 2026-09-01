@@ -14,7 +14,7 @@ import {
   resolveDoorwayUrl,
   resolveStatusEndpoint,
   rabbitCupEnabled,
-  isLoopbackHost,
+  isAllowedHost,
   whatsappUrl,
   ARIE_WHATSAPP,
 } from '../lib/standee.ts'
@@ -41,21 +41,27 @@ test('EV-1: an https override is honoured verbatim', () => {
   assert.equal(resolveDoorwayUrl({ NEXT_PUBLIC_DOORWAY_URL: staging }), staging)
 })
 
-// ── EV-17 · no loopback can ever be the doorway ──────────────────────
-test('EV-17: loopback hosts are recognised', () => {
-  for (const h of ['localhost', 'LOCALHOST', 'api.localhost', '127.0.0.1', '127.1.2.3', '0.0.0.0', '::1', '[::1]']) {
-    assert.equal(isLoopbackHost(h), true, `${h} should be loopback`)
+// ── EV-17 · the host law is an allowlist, so loopback loses by default ──
+// The first GREEN attempt used a loopback DENYLIST. Its `'localhost'` literal
+// survived minification into the served chunk, and the bundle census went RED
+// on the guard itself — the guard minted the condition it measures. The law is
+// now stated positively: a doorway is one of ours, or it is not a doorway.
+test('EV-17: only Longevity Valley hosts are allowed', () => {
+  for (const h of ['app.longevityvalley.ai', 'LONGEVITYVALLEY.AI', 'staging.longevityvalley.ai', 'lv-x1.vercel.app']) {
+    assert.equal(isAllowedHost(h), true, `${h} should be allowed`)
   }
-  for (const h of ['app.longevityvalley.ai', 'example.com', '10.0.0.1']) {
-    assert.equal(isLoopbackHost(h), false, `${h} should not be loopback`)
+  for (const h of ['localhost', 'LOCALHOST', 'api.localhost', '127.0.0.1', '127.1.2.3', '0.0.0.0', '[::1]', 'example.com', 'longevityvalley.ai.evil.com', 'notlongevityvalley.ai'.replace('not', 'evil-')]) {
+    assert.equal(isAllowedHost(h), false, `${h} should be refused`)
   }
 })
 
-test('EV-17: a loopback or non-https override is refused, and the canon stands', () => {
+test('EV-17: a loopback, foreign or non-https override is refused, and the canon stands', () => {
   const refused = [
     'http://localhost:3100',
     'https://localhost:3100/scan',
     'https://127.0.0.1/scan',
+    'https://[::1]/scan',
+    'https://evil.example.com/scan/dr-magfield/krpm',
     'http://app.longevityvalley.ai/scan/dr-magfield/krpm',
     'not-a-url',
     'javascript:alert(1)',
@@ -72,8 +78,8 @@ test('EV-17: no status endpoint configured means null, never a localhost guess',
   assert.equal(resolveStatusEndpoint({ NEXT_PUBLIC_STANDEE_STATUS_URL: '' }), null)
 })
 
-test('EV-17: a loopback or non-https status endpoint is refused', () => {
-  for (const raw of ['http://localhost:3100/api/banner', 'https://localhost:3100/x', 'http://example.com/x', 'nope']) {
+test('EV-17: a loopback, foreign or non-https status endpoint is refused', () => {
+  for (const raw of ['http://localhost:3100/api/banner', 'https://localhost:3100/x', 'https://evil.example.com/x', 'http://app.longevityvalley.ai/x', 'nope']) {
     assert.equal(resolveStatusEndpoint({ NEXT_PUBLIC_STANDEE_STATUS_URL: raw }), null, `${raw} must be refused`)
   }
 })
