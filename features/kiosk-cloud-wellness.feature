@@ -10,7 +10,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
   guests only after his own-face test plus Main's and Astra's grades.
 
   Background:
-    Given the wellness check is enabled for outlet "krpm" at Calendesk location 6 for services 13 and 14
+    Given the wellness check is enabled for outlet "krpm" at Calendesk location 6
     And this kiosk tablet is enrolled
     And today in Kuala Lumpur is "2026-10-20"
     And Calendesk has booking 501 at location 6 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
@@ -38,7 +38,6 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     Examples:
       | location | service | date       | status    | owner               | reason             |
       | 7        | 13      | 2026-10-20 | approved  | guest@example.com   | WRONG_OUTLET       |
-      | 6        | 99      | 2026-10-20 | approved  | guest@example.com   | WRONG_SERVICE      |
       | 6        | 13      | 2026-10-19 | approved  | guest@example.com   | NOT_TODAY          |
       | 6        | 13      | 2026-10-20 | cancelled | guest@example.com   | BOOKING_NOT_ACTIVE |
       | 6        | 14      | 2026-10-20 | approved  | someone@example.com | EMAIL_MISMATCH     |
@@ -250,3 +249,20 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest starts the scan
     Then the kiosk shows the "failed" screen
     And no video was uploaded and no process request was sent
+
+  Scenario: K-26 Any service at KRPM counts (Keith 10-19), so a service-8 booking at location 6 is accepted
+    Given Calendesk has booking 503 at location 6 for service 8 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
+    When the guest confirms booking 503 with "guest@example.com"
+    Then the kiosk shows the "consent" screen
+
+  Scenario: K-27 A booking at another outlet is refused, and the refusal log names its location and service IDs
+    Given Calendesk has booking 504 at location 9 for service 21 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
+    When the guest confirms booking 504 with "guest@example.com"
+    Then the booking is refused with "WRONG_OUTLET"
+    And the refusal log names location 9 and service 21 and no email address
+
+  Scenario: K-28 An optional service restriction still refuses other services
+    Given the check is restricted to services 13 and 14
+    And Calendesk has booking 505 at location 6 for service 8 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
+    When the guest confirms booking 505 with "guest@example.com"
+    Then the booking is refused with "WRONG_SERVICE"

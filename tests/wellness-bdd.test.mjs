@@ -192,9 +192,9 @@ function* walk(dir) {
 const R = createRegistry()
 
 // ── Background ────────────────────────────────────────────────────────
-R.Given(/^the wellness check is enabled for outlet "([^"]+)" at Calendesk location (\d+) for services (\d+) and (\d+)$/, (w, outlet, loc, s1, s2) => {
+R.Given(/^the wellness check is enabled for outlet "([^"]+)" at Calendesk location (\d+)$/, (w, outlet, loc) => {
   Object.assign(w.env, {
-    SCANS_ENABLED: '1', KIOSK_OUTLET: outlet, KIOSK_LOCATION_ID: loc, KIOSK_SERVICE_IDS: `${s1},${s2}`, KIOSK_TIME_ZONE: 'Asia/Kuala_Lumpur',
+    SCANS_ENABLED: '1', KIOSK_OUTLET: outlet, KIOSK_LOCATION_ID: loc, KIOSK_TIME_ZONE: 'Asia/Kuala_Lumpur',
     FACEPHYS_BASE_URL: `https://${HOSTS.facephys}`, FACEPHYS_KEY_ID: 'kid-test', FACEPHYS_SECRET_KEY: SECRETS.facephys,
     CALENDESK_API_BASE: `https://${HOSTS.calendesk}/api`, CALENDESK_API_KEY: SECRETS.calendesk, CALENDESK_TENANT: 'tenant-test',
     RESEND_API_KEY: SECRETS.mail, EMAIL_API_BASE: `https://${HOSTS.mail}`, EMAIL_FROM: 'DR MAGfield <kiosk@drmagfield.test>',
@@ -503,5 +503,14 @@ R.Given(/^Calendesk names employee (\d+) as "([^"]+)" with "([^"]+)"$/, (w, id, 
   w.employees.set(Number(id), { id: Number(id), user: { id: 900 + Number(id), name, surname: null, email, status: 'active' }, services: [{ id: 13 }] })
 })
 R.Given(/^FacePhys presigns uploads to "([^"]+)"$/, (w, host) => { w.presignHost = host })
+
+// ── any service at KRPM (Keith 10-19) ─────────────────────────────────
+R.Given(/^the check is restricted to services (\d+) and (\d+)$/, (w, a, b) => { w.env.KIOSK_SERVICE_IDS = `${a},${b}` })
+R.Then(/^the refusal log names location (\d+) and service (\d+) and no email address$/, (w, loc, svc) => {
+  const line = w.logs.map((l) => JSON.parse(l)).find((l) => l.event === 'booking_refused')
+  assert.equal(line.locationId, +loc)
+  assert.equal(line.serviceId, +svc)
+  assert.ok(!JSON.stringify(line).includes('@'), 'an email address reached the refusal log')
+})
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())
