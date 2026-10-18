@@ -7,22 +7,26 @@ const { chromium } = require('playwright-core')
 const BASE = 'http://127.0.0.1:3107'
 const out = (k, v) => console.log(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] })
+const OPEN = process.env.DRIVE_MODE === 'open' // production simplicity: no KIOSK_ENROLL_CODE
 try {
-  // 1 · an unenrolled tablet is refused before any vendor call
+  // 1 · an unenrolled tablet is refused before any vendor call (enrolled mode only)
+  if (!OPEN) {
   const stranger = await (await browser.newContext()).newPage()
   await stranger.goto(`${BASE}/scan`)
   await stranger.getByRole('button', { name: 'Start' }).click()
   await stranger.getByLabel('Booking number').fill('501')
   await stranger.getByLabel('Email you booked with').fill('guest@example.com')
   await stranger.getByRole('button', { name: 'Continue' }).click()
-  out('unenrolled', await stranger.getByRole('alert').innerText())
+  const msg = stranger.getByText('set up for wellness checks'); await msg.waitFor({ timeout: 15_000 })
+  out('unenrolled', await msg.innerText())
+  }
   // 2 · enrol this tablet
   const ctx = await browser.newContext()
   const page = await ctx.newPage()
   await page.goto(`${BASE}/scan/enroll`)
   await page.getByLabel('Set-up code').fill('drive-enroll-code-0001')
   await page.getByRole('button', { name: 'Set up' }).click()
-  out('enrolled', await page.getByText('This tablet is set up').innerText())
+  out('enrolled', await page.getByText(OPEN ? 'needs no tablet set-up' : 'This tablet is set up').innerText())
   out('cookie', (await ctx.cookies()).map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite })))
   // free preflight on the enrolled tablet: auth test + presign host, no upload, no charge
   const pre = await page.goto(`${BASE}/api/wellness/health?probe=facephys`)

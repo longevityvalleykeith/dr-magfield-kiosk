@@ -7,6 +7,9 @@
  */
 import type { WellnessConfig } from './config.ts'
 
+/** The booking's own Calendesk employee, read only to resolve the guest's optional CC. Never logged or recorded. */
+export interface EmployeeFacts { id: number; name: string | null; email: string | null; status: string | null }
+
 export interface BookingFacts {
   id: number
   status: string
@@ -18,6 +21,7 @@ export interface BookingFacts {
   startDate: string | null
   startsAt: string | null
   customerEmail: string | null
+  employee: EmployeeFacts | null
 }
 
 export type BookingRead = { ok: true; booking: BookingFacts } | { ok: false; reason: 'BOOKING_NOT_FOUND' | 'BOOKING_UNAVAILABLE' }
@@ -29,6 +33,16 @@ const int = (v: unknown): number | null => {
   return null
 }
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+export function parseEmployee(raw: unknown): EmployeeFacts | null {
+  const top = obj(raw)
+  const row = obj(top?.data) ?? top
+  const id = int(row?.id)
+  if (!row || id === null) return null
+  const user = obj(row.user)
+  const name = [str(user?.name), str(user?.surname)].filter(Boolean).join(' ') || null
+  return { id, name, email: str(user?.email)?.toLowerCase() ?? null, status: str(user?.status)?.toLowerCase() ?? null }
+}
 
 export function parseBooking(raw: unknown): BookingFacts | null {
   const top = obj(raw)
@@ -50,6 +64,7 @@ export function parseBooking(raw: unknown): BookingFacts | null {
     startDate: str(row.start_date),
     startsAt: str(row.starts_at),
     customerEmail: str(user?.email)?.toLowerCase() ?? null,
+    employee: obj(row.employee) ? parseEmployee(row.employee) : null,
   }
 }
 
@@ -69,4 +84,28 @@ export async function readBooking(cfg: NonNullable<WellnessConfig['calendesk']>,
   try { body = await res.json() } catch { return { ok: false, reason: 'BOOKING_UNAVAILABLE' } }
   const booking = parseBooking(body)
   return booking && booking.id === bookingId ? { ok: true, booking } : { ok: false, reason: 'BOOKING_UNAVAILABLE' }
+}
+
+export async function readEmployee(cfg: NonNullable<WellnessConfig['calendesk']>, employeeId: number, fetchImpl: typeof fetch): Promise<EmployeeFacts | null> {
+  try {
+    const res = await fetchImpl(`${cfg.baseUrl}/admin/employees/${employeeId}`, {
+      method: 'GET',
+      headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(4_000),
+    })
+    if (!res.ok) return null
+    const emp = parseEmployee(await res.json())
+    return emp && emp.id === employeeId ? emp : null
+  } catch { return null }
+}
+
+/** Free probe: an authenticated read of /admin/settings (no customer data) proves the key and tenant. */
+export async function calendeskReachable(cfg: NonNullable<WellnessConfig['calendesk']>, fetchImpl: typeof fetch): Promise<boolean> {
+  try {
+    const res = await fetchImpl(`${cfg.baseUrl}/admin/settings`, {
+      method: 'GET', headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(4_000),
+    })
+    return res.ok
+  } catch { return false }
 }

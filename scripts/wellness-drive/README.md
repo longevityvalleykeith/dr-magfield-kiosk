@@ -23,4 +23,6 @@ PLAYWRIGHT_FROM=/path/to/a/checkout/with/playwright-core/package.json node scrip
 
 At the end it prints every call the mocks saw: booking reads, one presign, one PUT (with `%2F` normalised), one process (`confirmCharge`, `dmk-<uuid>`, SHA-256) and one email.
 
+**Simplest production setup:** set `DRIVE_MODE=open` and start `next start` with only `SCANS_ENABLED`, the FacePhys/Calendesk/Resend keys and the base URLs above. Leave out the enrol code, cookie secret, roster, tenant and upload hosts. The CC then comes from the mock's Calendesk employee.
+
 Set `CHROME_PATH` if Chrome is not at its default macOS path. The vendor secrets above are fakes used by the mock only.

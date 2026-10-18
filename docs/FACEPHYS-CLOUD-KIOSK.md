@@ -101,30 +101,32 @@ Routing the consent record into Foundry's receipts is **deferred** (Keith). Unti
 
 ## Environment variables (Vercel → `dr-magfield-kiosk-krpm` → Settings → Environment Variables)
 
-Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face test, and on **Production** only after the grades. **Never use a `NEXT_PUBLIC_` prefix.**
+**Production simplicity (Keith, 10-19).** Production needs only the switch and the four vendor secrets. Everything else is defaulted or derived. Mark secrets **Sensitive**, and never use a `NEXT_PUBLIC_` prefix.
 
 | Name | Value | Secret? |
 |---|---|---|
-| `SCANS_ENABLED` | `1` to switch the check on; anything else turns it off immediately | no |
-| `FACEPHYS_BASE_URL` | `https://www.facephys.com` | no |
-| `FACEPHYS_KEY_ID` | the Agent Key ID from the FacePhys console (an identifier the API echoes back, not a secret) | no |
-| `FACEPHYS_SECRET_KEY` | the Agent Key secret from the FacePhys console. Paste it into Vercel only: never into chat, the repo or a committed `.env` | **yes** |
-| `FACEPHYS_UPLOAD_HOSTS` | **Required**: comma-separated host suffixes. Learn the host first from the free preflight (`/api/wellness/health?probe=facephys` on an enrolled tablet returns `uploadHost`). The check stays off until this is set. | no |
-| `ALLOW_MISSING_QUALITY` | optional. `1` lets a result with no signal-quality field count; by default it doesn't. Decide after the first real `vendor_result_shape` line. | no |
-| `SAME_KEY_RETRY` | optional, **off by default**. Off means an unknown outcome **stops**: no retry button, and a resend of that attempt is refused (`ATTEMPT_ALREADY_SUBMITTED`); the screen shows a reference for staff. `1` allows same-key retries. Turn it on only after FacePhys's replay (no second charge) has been measured. | no |
-| `CALENDESK_API_KEY` | a Calendesk API key; a separate key from Foundry's if Calendesk allows one. This code only ever sends a GET for one booking. | **yes** |
-| `CALENDESK_TENANT` | the Calendesk tenant, the same value as Foundry's `CALENDESK_TENANT` | no |
-| `RESEND_API_KEY` | a Resend key with **sending access only** | **yes** |
-| `EMAIL_FROM` | for example `DR MAGfield <kiosk@your-verified-domain>`, on a domain verified in Resend | no |
-| `CARE_ROSTER_JSON` | `[{"calendeskEmployeeId":12,"name":"…","email":"…","outlets":["krpm"],"active":true}]`, using the Calendesk employee IDs of services 13/14 | **yes** (staff emails) |
-| `KIOSK_ENROLL_CODE` | 16 or more random characters, typed once per tablet at `/scan/enroll` | **yes** |
-| `KIOSK_COOKIE_SECRET` | 32 or more random characters. Changing it un-enrols every tablet and voids open attempts. | **yes** |
-| `CONSENT_RECORD_TO` | optional: an LV mailbox for the minimal consent records | no |
-| `CONSENT_RETENTION_POLICY`, `CONSENT_RETENTION_DAYS` | Keith's retention rule for consent records (a version label and a number of days). Until both are set, records say `unset` | no |
-| `KIOSK_TENANT` | the LV tenant on the record; default `dr-magfield` | no |
-| `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE` | optional overrides; the defaults are 20 · 0.5 · 6 · 13,14 · krpm · DR MAGfield KRPM · Asia/Kuala_Lumpur | no |
+| `SCANS_ENABLED` | `1` switches the check on; anything else turns it off immediately | no |
+| `FACEPHYS_KEY_ID` | the Agent Key ID from the FacePhys console (an identifier, not a secret) | no |
+| `FACEPHYS_SECRET_KEY` | the Agent Key secret. It also derives the kiosk's signing key when `KIOSK_COOKIE_SECRET` is unset | **yes** |
+| `CALENDESK_API_KEY` | a Calendesk API key. The code only ever sends GET requests: a booking, its employee, and `/admin/settings` for the probe | **yes** |
+| `RESEND_API_KEY` | a Resend key with sending access | **yes** |
 
-**Check the setup without a charge:** open `/api/wellness/health?probe=facephys` on an enrolled tablet. It returns booleans, FacePhys `auth/test`, and a free presign preflight. The preflight gives `uploadHost` (hostname only) and `uploadHostPinned`, and never a signed URL or any value.
+**Defaults, which you can override:**
+- `CALENDESK_TENANT` = `zqlc6ablyz`, LV's own tenant behind `book.longevityvalley.ai` (measured in T1);
+- `EMAIL_FROM` = `DR MAGfield <noreply@longevityvalley.ai>`, the sender Foundry already uses;
+- `FACEPHYS_BASE_URL` = `https://www.facephys.com`.
+
+**Dynamic, so no static setting is needed:**
+- **Upload host:** https only, never through a redirect, under FacePhys's own domain or a known object-storage provider (Alibaba OSS, S3, Tencent COS, Cloudflare R2, Google Cloud Storage, Azure Blob). `FACEPHYS_UPLOAD_HOSTS` optionally pins it tighter.
+- **CC recipient:** the booking's own Calendesk employee (name and email from Calendesk), never a substitute. `CARE_ROSTER_JSON` optionally restricts it to a roster.
+
+**Optional stricter mode:**
+- `KIOSK_ENROLL_CODE` (16+ characters) requires one-time set-up per tablet. Without it, every check is still gated by today's booking match, a typed booking email and the kill switch.
+- `KIOSK_COOKIE_SECRET` sets an independent signing key.
+
+**Other optional settings:** `CONSENT_RECORD_TO`, `CONSENT_RETENTION_POLICY`/`CONSENT_RETENTION_DAYS`, `ALLOW_MISSING_QUALITY`, `SAME_KEY_RETRY`, `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE`, `KIOSK_TENANT`.
+
+**Check the setup without a charge:** open `/api/wellness/health?probe=facephys`. In open mode anyone can run it, at most 10 times a minute per instance; in enrolled mode only an enrolled tablet can. It returns booleans; FacePhys `auth/test`; a free presign preflight giving `uploadHost` (hostname only), `uploadHostAllowed` and `uploadPolicy`; and `calendeskAuth`. It never returns a signed URL or any value.
 
 ## Clause map against T1 #164
 

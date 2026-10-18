@@ -9,14 +9,14 @@ import styles from '../kiosk.module.css'
 
 export default function EnrollForm() {
   const [code, setCode] = useState('')
-  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'wrong' | 'off'>('idle')
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'wrong' | 'off' | 'open'>('idle')
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setState('busy')
     const r = await fetch('/api/wellness/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }), credentials: 'same-origin', cache: 'no-store' }).catch(() => null)
     setCode('')
-    setState(r?.status === 204 ? 'done' : r?.status === 503 ? 'off' : 'wrong')
+    setState(r?.status === 204 ? 'done' : r?.status === 200 ? 'open' : r?.status === 503 ? 'off' : 'wrong')
   }
 
   return (
@@ -24,7 +24,12 @@ export default function EnrollForm() {
       <section className={styles.card}>
         <p className={styles.kicker}>Staff only</p>
         <h1 className={styles.title}>Set up this tablet for wellness checks</h1>
-        {state === 'done' ? (
+        {state === 'open' ? (
+          <>
+            <p className={styles.lead}>This deployment needs no tablet set-up. Each check is gated by today’s booking.</p>
+            <a className={styles.primary} href="/scan" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Open the wellness check</a>
+          </>
+        ) : state === 'done' ? (
           <>
             <p className={styles.lead}>This tablet is set up for 30 days.</p>
             <a className={styles.primary} href="/scan" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Open the wellness check</a>

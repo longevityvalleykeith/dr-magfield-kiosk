@@ -33,16 +33,17 @@ export function normalizeUploadUrl(url: string): string {
 }
 
 /**
- * CLOUD-04: validate the upload origin. It must be https, unless the configured base URL is itself a loopback
- * test double, and its host must match FACEPHYS_UPLOAD_HOSTS when that list is set. Returns the host, or null.
+ * CLOUD-04: validate the upload origin. It must be https, unless the configured base URL is itself a loopback test
+ * double. Its host must sit under cfg.uploadHosts: the pinned list, or by default FacePhys's own domain plus the known
+ * object-storage providers. An empty list admits nothing. Returns the host, or null.
  */
-export function uploadHostAllowed(uploadUrl: string, cfg: FacePhys): string | null {
+export function uploadHostAllowed(uploadUrl: string, cfg: Pick<FacePhys, 'baseUrl' | 'uploadHosts'>): string | null {
   let u: URL
   try { u = new URL(uploadUrl) } catch { return null }
   const loopbackDouble = cfg.baseUrl.startsWith('http://127.0.0.1:') && u.protocol === 'http:' && u.hostname === '127.0.0.1'
   if (u.protocol !== 'https:' && !loopbackDouble) return null
   const host = u.hostname.toLowerCase()
-  if (cfg.uploadHosts.length > 0 && !cfg.uploadHosts.some((h) => host === h || host.endsWith(`.${h}`))) return null
+  if (!cfg.uploadHosts.some((h) => host === h || host.endsWith(`.${h}`))) return null
   return host
 }
 
@@ -117,17 +118,17 @@ export async function authTest(cfg: FacePhys, fetchImpl: typeof fetch, nowMs: ()
  * Free preflight (presign consumes no tokens): which host would receive the video, and is it pinned?
  * Returns the hostname only. The signed uploadUrl never leaves this function.
  */
-export async function presignPreflight(cfg: FacePhys, fetchImpl: typeof fetch, nowMs: () => number): Promise<{ host: string | null; pinned: boolean }> {
+export async function presignPreflight(cfg: FacePhys, fetchImpl: typeof fetch, nowMs: () => number): Promise<{ host: string | null; allowed: boolean }> {
   try {
     const res = await fetchImpl(`${cfg.baseUrl}/api/v2/video/upload/presign`, {
       method: 'POST', headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(5_000),
     })
-    if (!res.ok) return { host: null, pinned: false }
+    if (!res.ok) return { host: null, allowed: false }
     const body = (await res.json()) as { uploadUrl?: unknown }
-    if (typeof body.uploadUrl !== 'string') return { host: null, pinned: false }
+    if (typeof body.uploadUrl !== 'string') return { host: null, allowed: false }
     const url = normalizeUploadUrl(body.uploadUrl)
     let host: string
-    try { host = new URL(url).hostname.toLowerCase() } catch { return { host: null, pinned: false } }
-    return { host, pinned: cfg.uploadHosts.length > 0 && uploadHostAllowed(url, cfg) !== null }
-  } catch { return { host: null, pinned: false } }
+    try { host = new URL(url).hostname.toLowerCase() } catch { return { host: null, allowed: false } }
+    return { host, allowed: uploadHostAllowed(url, cfg) !== null }
+  } catch { return { host: null, allowed: false } }
 }

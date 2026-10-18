@@ -36,3 +36,12 @@ export function enrollBudgetLeft(nowMs: number): boolean {
 }
 
 export function noteEnrollFailure(nowMs: number): void { enrollFailures.push(nowMs) }
+
+let probes: number[] = []
+/** The free preflight is public in open mode: at most 10 per minute per instance. */
+export function probeBudgetLeft(nowMs: number): boolean {
+  probes = probes.filter((t) => nowMs - t < 60_000)
+  if (probes.length >= 10) return false
+  probes.push(nowMs)
+  return true
+}

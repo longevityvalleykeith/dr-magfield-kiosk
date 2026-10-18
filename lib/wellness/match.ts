@@ -10,7 +10,6 @@
  */
 import type { BookingFacts } from './calendesk.ts'
 import type { WellnessConfig } from './config.ts'
-import { careRecipientFor } from './roster.ts'
 import type { RosterEntry } from './roster.ts'
 
 export type MatchReason =
@@ -48,7 +47,7 @@ export interface MatchInput {
   now: Date
 }
 
-export type MatchResult = { ok: true; care: RosterEntry | null } | { ok: false; reasons: MatchReason[] }
+export type MatchResult = { ok: true } | { ok: false; reasons: MatchReason[] }
 
 export function matchBooking(i: MatchInput): MatchResult {
   const reasons: MatchReason[] = []
@@ -58,5 +57,5 @@ export function matchBooking(i: MatchInput): MatchResult {
   if (!ACTIVE.has(i.booking.status)) reasons.push('BOOKING_NOT_ACTIVE')
   if (!i.booking.customerEmail || i.booking.customerEmail !== normalizeEmail(i.typedEmail)) reasons.push('EMAIL_MISMATCH')
   if (reasons.length > 0) return { ok: false, reasons }
-  return { ok: true, care: careRecipientFor(i.roster, i.booking.employeeId, i.outlet.slug) }
+  return { ok: true }
 }

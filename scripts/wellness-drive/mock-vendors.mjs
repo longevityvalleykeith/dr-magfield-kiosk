@@ -19,11 +19,13 @@ http.createServer((req, res) => {
       return send(res, req.url.split('?')[0].includes('%2F') ? 403 : 200)
     }
     if (u.pathname.startsWith('/api/admin/bookings/')) {
-      calls.push({ kind: 'booking', id: u.pathname.split('/').pop(), auth: h['x-api-key'] === CD && h['x-tenant'] === 'drive-tenant' })
+      calls.push({ kind: 'booking', id: u.pathname.split('/').pop(), auth: h['x-api-key'] === CD && ['drive-tenant', 'zqlc6ablyz'].includes(h['x-tenant']) })
       if (h['x-api-key'] !== CD) return send(res, 401, { message: 'Unauthenticated.' })
       if (u.pathname.endsWith('/501')) return send(res, 200, { data: { id: 501, status: 'approved', paid: true, location: { location_id: 6 }, service_id: 13, employee_id: 12, start_date: today, starts_at: `${today} 10:30:00`, user: { email: 'guest@example.com', name: 'Drive', surname: 'Guest' } } })
       return send(res, 404, { message: 'Not found' })
     }
+    if (u.pathname === '/api/admin/employees/12') { calls.push({ kind: 'employee', id: '12' }); return send(res, 200, { data: { id: 12, user: { name: 'Aisyah', surname: null, email: 'aisyah@example.com', status: 'active' } } }) }
+    if (u.pathname === '/api/admin/settings') { calls.push({ kind: 'calendesk_settings' }); return send(res, h['x-api-key'] === CD ? 200 : 401, { data: {} }) }
     if (u.pathname === '/emails') {
       const m = JSON.parse(body.toString() || '{}')
       calls.push({ kind: 'email', auth: h.authorization === `Bearer ${RS}`, idem: h['idempotency-key'], to: m.to, cc: m.cc, subject: m.subject, disclaimer: (m.text || '').includes('wellness indicator, not a medical measurement'), leaks: ['spo2', 'SpO2', 'stress', 'emotion'].filter((w) => (m.text || '').includes(w)) })

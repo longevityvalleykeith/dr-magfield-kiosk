@@ -7,7 +7,7 @@ import { createHmac } from 'node:crypto'
 import { signedHeaders, normalizeUploadUrl, uploadHostAllowed } from '../lib/wellness/facephys.ts'
 import { normalizeResult, keyPaths } from '../lib/wellness/result.ts'
 import { matchBooking, localDay, bookingDay } from '../lib/wellness/match.ts'
-import { parseBooking } from '../lib/wellness/calendesk.ts'
+import { parseBooking, parseEmployee } from '../lib/wellness/calendesk.ts'
 import { parseRoster, careRecipientFor } from '../lib/wellness/roster.ts'
 import { readConfig, isReady } from '../lib/wellness/config.ts'
 import { issueDevice, deviceIdFrom, issueAttempt, readAttempt, emailHash, enrollCodeMatches } from '../lib/wellness/tokens.ts'
@@ -31,14 +31,39 @@ test('upload URL: %2F is restored in the path only; the signed query stays byte-
   assert.equal(normalizeUploadUrl('https://o.test/a%2fb.mp4'), 'https://o.test/a/b.mp4')
 })
 
-test('upload origin: https only, optional host allowlist, loopback only for a loopback test double', () => {
-  const cfg = { baseUrl: 'https://www.facephys.com', keyId: 'k', secretKey: 's', uploadHosts: [] }
+test('upload origin: the dynamic rule admits FacePhys and known storage providers over https, nothing else', () => {
+  const cfg = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's' }).facephys
+  assert.equal(cfg.uploadPolicy, 'dynamic')
   assert.equal(uploadHostAllowed('https://b.oss-ap-southeast-3.aliyuncs.com/x.mp4?sig=1', cfg), 'b.oss-ap-southeast-3.aliyuncs.com')
-  assert.equal(uploadHostAllowed('http://b.example.com/x.mp4', cfg), null)
-  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', cfg), null, 'no plaintext upload in production')
-  assert.equal(uploadHostAllowed('https://evil.example/x.mp4', { ...cfg, uploadHosts: ['aliyuncs.com'] }), null)
-  assert.equal(uploadHostAllowed('https://b.oss-cn-hangzhou.aliyuncs.com/x', { ...cfg, uploadHosts: ['aliyuncs.com'] }), 'b.oss-cn-hangzhou.aliyuncs.com')
-  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', { ...cfg, baseUrl: 'http://127.0.0.1:4810' }), '127.0.0.1')
+  assert.equal(uploadHostAllowed('https://upload.facephys.com/x.mp4', cfg), 'upload.facephys.com')
+  assert.equal(uploadHostAllowed('https://kiosk.s3.ap-southeast-1.amazonaws.com/x', cfg), 'kiosk.s3.ap-southeast-1.amazonaws.com')
+  assert.equal(uploadHostAllowed('https://evil.example/x.mp4', cfg), null)
+  assert.equal(uploadHostAllowed('https://aliyuncs.com.evil.example/x.mp4', cfg), null, 'a suffix lookalike is refused')
+  assert.equal(uploadHostAllowed('http://b.oss-ap-southeast-3.aliyuncs.com/x.mp4', cfg), null, 'never plaintext')
+  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', cfg), null, 'no loopback in production')
+  const pinned = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's', FACEPHYS_UPLOAD_HOSTS: 'oss-ap-southeast-1.aliyuncs.com' }).facephys
+  assert.equal(pinned.uploadPolicy, 'pinned')
+  assert.equal(uploadHostAllowed('https://b.oss-cn-hangzhou.aliyuncs.com/x', pinned), null, 'a pin narrows the rule')
+  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', { baseUrl: 'http://127.0.0.1:4810', uploadHosts: ['127.0.0.1'] }), '127.0.0.1')
+  assert.equal(uploadHostAllowed('https://b.oss-ap-southeast-3.aliyuncs.com/x', { baseUrl: 'https://www.facephys.com', uploadHosts: [] }), null, 'an empty list admits nothing')
+})
+
+test('production simplicity: four vendor secrets plus the switch are enough; the rest is defaulted or derived', () => {
+  const c = readConfig({ SCANS_ENABLED: '1', FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's3cret', CALENDESK_API_KEY: 'cd', RESEND_API_KEY: 'rs' })
+  assert.equal(isReady(c), true)
+  assert.equal(c.calendesk.tenant, 'zqlc6ablyz')
+  assert.equal(c.mail.from, 'DR MAGfield <noreply@longevityvalley.ai>')
+  assert.equal(c.device.enrollCode, null, 'open mode: no tablet set-up')
+  assert.equal(c.device.cookieSecret, createHmac('sha256', 's3cret').update('dmk-kiosk-signing-v1').digest('hex'))
+  assert.equal(c.careSource, 'calendesk')
+  assert.equal(isReady(readConfig({ SCANS_ENABLED: '1', FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's', CALENDESK_API_KEY: 'cd', RESEND_API_KEY: 'rs', KIOSK_ENROLL_CODE: 'short' })), false, 'a too-short enrolment code fails closed')
+  assert.equal(readConfig({ CARE_ROSTER_JSON: '[]' }).careSource, 'roster')
+})
+
+test('the booking employee is parsed from its nested Calendesk user, never invented', () => {
+  assert.deepEqual(parseEmployee({ data: { id: 12, user: { name: 'Aisyah', surname: 'Rahman', email: ' A@X.co ', status: 'Active' } } }), { id: 12, name: 'Aisyah Rahman', email: 'a@x.co', status: 'active' })
+  assert.deepEqual(parseEmployee({ id: 13 }), { id: 13, name: null, email: null, status: null })
+  assert.equal(parseEmployee({ user: { email: 'x@y.co' } }), null)
 })
 
 test('results: only the four admitted indicators survive; everything else FacePhys returns is dropped', () => {
@@ -66,7 +91,7 @@ test('result shape is logged as key paths only, never values', () => {
 
 test('Calendesk booking parsing reads the admin fields and the nested customer email, nothing else', () => {
   const b = parseBooking({ data: { id: 501, status: 'Approved', location: { location_id: 6 }, service_id: 13, employee_id: 12, start_date: '2026-10-20', starts_at: '2026-10-20 10:30:00', user: { email: ' Guest@Example.com ', name: 'Name', default_phone: { e164: '+60' } }, control: 'cancel-credential' } })
-  assert.deepEqual(b, { id: 501, status: 'approved', locationId: 6, serviceLocationId: null, serviceId: 13, serviceTypeId: null, employeeId: 12, startDate: '2026-10-20', startsAt: '2026-10-20 10:30:00', customerEmail: 'guest@example.com' })
+  assert.deepEqual(b, { id: 501, status: 'approved', locationId: 6, serviceLocationId: null, serviceId: 13, serviceTypeId: null, employeeId: 12, startDate: '2026-10-20', startsAt: '2026-10-20 10:30:00', customerEmail: 'guest@example.com', employee: null })
   assert.equal(parseBooking({ data: { status: 'approved' } }), null)
 })
 

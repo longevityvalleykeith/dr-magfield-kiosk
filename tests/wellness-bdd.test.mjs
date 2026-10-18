@@ -152,6 +152,7 @@ class World {
         const b = this.bookings.get(Number(m[1]))
         return b ? json(200, { data: b }) : json(404, { message: 'Not found' })
       }
+      if (u.pathname === '/api/admin/settings' && method === 'GET') return json(200, { data: { company_name: 'test' } })
       const e = /^\/api\/admin\/employees\/(\d+)$/.exec(u.pathname)
       if (e && method === 'GET') {
         const emp = this.employees.get(Number(e[1]))
@@ -458,6 +459,7 @@ R.Then(/^the preflight names the upload host "([^"]+)" as allowed by the "(dynam
   assert.equal(b.uploadHost, host)
   assert.equal(b.uploadHostAllowed, true)
   assert.equal(b.uploadPolicy, rule)
+  assert.equal(b.calendeskAuth, 'ok', 'the free probe also proves the Calendesk key and tenant')
   assert.ok(!w.lastReply.text.includes('Signature'), 'the signed upload URL must never be returned')
 })
 R.Then(/^no video was uploaded and no process request was sent$/, (w) => {
@@ -498,7 +500,7 @@ R.Given(/^production simplicity: no enrolment code, cookie secret, CARE roster o
   w.roster = null
 })
 R.Given(/^Calendesk names employee (\d+) as "([^"]+)" with "([^"]+)"$/, (w, id, name, email) => {
-  w.employees.set(Number(id), { id: Number(id), user: { id: 900 + Number(id), name, surname: 'CARE', email, status: 'active' }, services: [{ id: 13 }] })
+  w.employees.set(Number(id), { id: Number(id), user: { id: 900 + Number(id), name, surname: null, email, status: 'active' }, services: [{ id: 13 }] })
 })
 R.Given(/^FacePhys presigns uploads to "([^"]+)"$/, (w, host) => { w.presignHost = host })
 
