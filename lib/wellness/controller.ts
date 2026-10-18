@@ -178,7 +178,9 @@ export class KioskController {
     } catch { reply = { status: 0, body: null } }
     if (epoch !== this.epoch) return // a late reply never reaches the next guest
     const b = reply.body ?? {}
-    if (reply.status === 0 || b.status === 'unknown_outcome') { this.set({ busy: false, screen: 'unknown' }); return }
+    // No JSON from us (network loss, a 502/504 from the platform) may come after FacePhys charged: unknown, retry-safe.
+    const platformError = reply.status === 0 || (reply.status >= 500 && typeof b.status !== 'string')
+    if (platformError || b.status === 'unknown_outcome') { this.set({ busy: false, screen: 'unknown' }); return }
     if (b.status === 'completed') {
       const delivery = b.delivery === 'sent' ? 'sent' : 'failed'
       if (delivery === 'sent') this.clip = null

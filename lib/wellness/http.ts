@@ -24,6 +24,7 @@ import { allowSubmission, enrollBudgetLeft, noteEnrollFailure } from './limits.t
 import { sha256Hex } from './crypto.ts'
 import { CONSENT_VERSION } from './consent.ts'
 
+/** Worst case per scan: Calendesk 5 s + presign 6 s + upload 15 s + process 26 s + email 5 s = 57 s, under maxDuration 60. */
 export interface Deps {
   env: Env
   fetch: typeof fetch

@@ -62,7 +62,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
     const res = await fetchImpl(`${cfg.baseUrl}/api/v2/video/upload/presign`, {
       method: 'POST',
       headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(6_000),
     })
     if (res.status === 401 || res.status === 403) return { kind: 'refused', code: 'VENDOR_AUTH', httpStatus: res.status }
     if (!res.ok) return { kind: 'not_submitted', code: 'PRESIGN_FAILED' }
@@ -77,7 +77,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
 
   // 2 · upload the exact bytes that were hashed.
   try {
-    const put = await fetchImpl(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: a.video, signal: AbortSignal.timeout(30_000) })
+    const put = await fetchImpl(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: a.video, signal: AbortSignal.timeout(15_000) })
     if (!put.ok) return { kind: 'not_submitted', code: 'UPLOAD_FAILED' }
   } catch { return { kind: 'not_submitted', code: 'UPLOAD_FAILED' } }
 
@@ -88,7 +88,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
       method: 'POST',
       headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' },
       body: JSON.stringify({ objectKey, capability: 'rppg', confirmCharge: true, idempotencyKey: a.idempotencyKey, videoSha256: a.videoSha256 }),
-      signal: AbortSignal.timeout(50_000),
+      signal: AbortSignal.timeout(26_000),
     })
   } catch { return { kind: 'unknown_outcome' } }
   if (res.status === 200) {

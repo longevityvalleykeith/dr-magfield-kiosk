@@ -13,6 +13,7 @@ import { readConfig, isReady } from '../lib/wellness/config.ts'
 import { issueDevice, deviceIdFrom, issueAttempt, readAttempt, emailHash, enrollCodeMatches } from '../lib/wellness/tokens.ts'
 import { composeResultEmail } from '../lib/wellness/email.ts'
 import { isMp4, mask } from '../lib/wellness/http.ts'
+import { KioskController } from '../lib/wellness/controller.ts'
 
 const SECRET = 'cookie-secret-for-tests-0123456789abcdef'
 const outlet = { slug: 'krpm', name: 'DR MAGfield KRPM', locationId: 6, serviceIds: [13, 14], timeZone: 'Asia/Kuala_Lumpur' }
@@ -135,4 +136,17 @@ test('only an ISO-BMFF ("ftyp") file counts as mp4; masking hides the address', 
   assert.equal(isMp4(new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d])), true)
   assert.equal(isMp4(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0])), false, 'webm is refused')
   assert.equal(mask('guest@example.com'), 'g•••@example.com')
+})
+
+test('a platform 504 with no body after submit is "unknown" and keeps the clip for a same-key retry', async () => {
+  const media = { on: false, supported: () => true, async open() { this.on = true }, async record() { return new Blob([new Uint8Array(2048)], { type: 'video/mp4' }) }, close() { this.on = false }, isOpen() { return this.on } }
+  const replies = [{ status: 200, body: { status: 'matched', attemptToken: 't', maskedEmail: 'g•••@x.co', care: null, scanSeconds: 10 } }, { status: 504, body: null }]
+  const api = { booking: async () => replies[0], scan: async () => replies[1] }
+  const c = new KioskController({ api, media, scanSeconds: 10 })
+  c.start(); await c.submitBooking('1', 'g@x.co')
+  c.setConsent('processing', true); c.setConsent('emailResults', true); await c.acceptConsent()
+  await c.startScan()
+  assert.equal(c.state.screen, 'unknown')
+  assert.equal(c.hasRecording(), true)
+  assert.equal(media.isOpen(), false, 'the camera is off once the clip exists')
 })
