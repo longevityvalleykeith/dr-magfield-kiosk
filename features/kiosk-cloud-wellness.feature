@@ -50,11 +50,13 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
 
   Scenario: K-05 One email to the guest with a CC to the booking's CARE employee (O2O-04, O2O-05)
     Given the guest confirmed booking 501 with "guest@example.com"
+    And the consent screen shows the exact To address "guest@example.com" and CC address "aisyah@example.com"
     And the guest agreed to processing and email delivery
     And the guest ticked CC to "Aisyah"
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
     Then FacePhys received exactly 1 presign, 1 upload and 1 process request
+    And every outbound request refused redirects
     And the process request carried confirmCharge true, the attempt's idempotency key and the video's SHA-256
     And exactly 1 email was sent to "guest@example.com" with CC "aisyah@example.com"
     And the email says "wellness indicator, not a medical measurement"
@@ -167,3 +169,47 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And no wellness response contains the FacePhys secret or the Calendesk key
     And no log line contains the FacePhys secret, the Calendesk key, the guest's email or a reading
     And the kiosk code uses no localStorage, sessionStorage, IndexedDB or service worker
+
+  Scenario: K-18 A result without any signal-quality field is not a reading (O2O-11)
+    Given the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with no signal quality field
+    When the guest starts the scan
+    Then the kiosk shows the "insufficient" screen with no values
+    And no email was sent
+
+  Scenario: K-19 Until the upload host is pinned the check stays off, and a free preflight names the host (CLOUD-04)
+    Given no upload host is pinned
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "CHECK_DISABLED"
+    When staff run the free FacePhys preflight on this tablet
+    Then the preflight names the upload host "oss.facephys-oss.test" as not pinned
+    And no video was uploaded and no process request was sent
+
+  Scenario: K-20 Consent records can also go to an LV mailbox, carrying no address or reading
+    Given consent records are also mailed to "records@lv.test"
+    And the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    When the guest starts the scan
+    Then exactly 1 consent-record email went to "records@lv.test" with no other email address or reading in it
+
+  Scenario: K-21 A slow scan never overruns the function: the optional record email is skipped near the deadline
+    Given consent records are also mailed to "records@lv.test"
+    And the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And FacePhys takes 52 seconds and then returns heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    When the guest starts the scan
+    Then exactly 1 email was sent to "guest@example.com" with no CC
+    And no consent-record email went to "records@lv.test"
+    And the consent record line is still written
+
+  Scenario: K-22 A CARE address that changes after the match drops the CC instead of following it (O2O-05)
+    Given the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And the guest ticked CC to "Aisyah"
+    And the CARE roster lists employee 12 "Aisyah" with "aisyah.new@example.com" as active at "krpm"
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    When the guest starts the scan
+    Then exactly 1 email was sent to "guest@example.com" with no CC
+    And the scan reply reports the CC as "unavailable"

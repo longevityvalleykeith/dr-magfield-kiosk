@@ -11,7 +11,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRegistry, runFeature } from './bdd/gherkin.mjs'
-import { handleEnroll, handleBooking, handleScan } from '../lib/wellness/http.ts'
+import { handleEnroll, handleBooking, handleScan, handleHealth } from '../lib/wellness/http.ts'
 import { KioskController, MESSAGES } from '../lib/wellness/controller.ts'
 import { CONSENT_VERSION } from '../lib/wellness/consent.ts'
 
@@ -118,7 +118,7 @@ class World {
       const bytes = new Uint8Array(body)
       body = { bytes: bytes.length, sha: createHash('sha256').update(bytes).digest('hex') }
     } else if (typeof body === 'string') { try { body = JSON.parse(body) } catch { /* keep text */ } }
-    this.calls.push({ host: u.host, method, path: u.pathname, search: u.search, headers, body })
+    this.calls.push({ host: u.host, method, path: u.pathname, search: u.search, headers, body, redirect: init.redirect })
     const json = (status, obj) => new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } })
 
     if (u.host === HOSTS.facephys) {
@@ -135,6 +135,7 @@ class World {
         if (next.type === 'lost') throw new TypeError('fetch failed')
         if (next.type === 'status') return json(next.status, { error: 'refused' })
         if (next.type === 'held') return new Promise((resolve) => { this.held = (b) => resolve(json(200, b)) })
+        if (next.delayMs) this.now = new Date(this.now.getTime() + next.delayMs)
         return json(200, next.body)
       }
       return json(404, { error: 'not found' })
@@ -159,7 +160,8 @@ class World {
 
   callsTo(...hosts) { return this.calls.filter((c) => hosts.includes(c.host)) }
   processCalls() { return this.calls.filter((c) => c.host === HOSTS.facephys && c.path === '/api/v3/video/process') }
-  mails() { return this.callsTo(HOSTS.mail) }
+  mails() { return this.callsTo(HOSTS.mail).filter((m) => !(m.body.to || []).includes(this.env.CONSENT_RECORD_TO)) }
+  recordMails() { return this.callsTo(HOSTS.mail).filter((m) => this.env.CONSENT_RECORD_TO && (m.body.to || []).includes(this.env.CONSENT_RECORD_TO)) }
   /** The mail provider dedupes on Idempotency-Key, so a replayed attempt is one email. */
   distinctMails() {
     const seen = new Map()
@@ -188,6 +190,7 @@ R.Given(/^the wellness check is enabled for outlet "([^"]+)" at Calendesk locati
     CALENDESK_API_BASE: `https://${HOSTS.calendesk}/api`, CALENDESK_API_KEY: SECRETS.calendesk, CALENDESK_TENANT: 'tenant-test',
     RESEND_API_KEY: SECRETS.mail, EMAIL_API_BASE: `https://${HOSTS.mail}`, EMAIL_FROM: 'DR MAGfield <kiosk@drmagfield.test>',
     KIOSK_ENROLL_CODE: 'enroll-code-for-tests-0001', KIOSK_COOKIE_SECRET: 'cookie-secret-for-tests-0123456789abcdef',
+    FACEPHYS_UPLOAD_HOSTS: HOSTS.oss,
   })
 })
 R.Given(/^this kiosk tablet is enrolled$/, async (w) => {
@@ -421,6 +424,53 @@ R.Then(/^the kiosk code uses no localStorage, sessionStorage, IndexedDB or servi
     const src = readFileSync(f, 'utf8')
     for (const banned of ['localStorage', 'sessionStorage', 'indexedDB', 'serviceWorker', 'caches.open']) assert.ok(!src.includes(banned), `${f} uses ${banned}`)
   }
+})
+
+// ── v1.7 runtime review (#164 ADVERSARIAL-RUNTIME-019) ─────────────────
+R.Given(/^the consent screen shows the exact To address "([^"]+)" and CC address "([^"]+)"$/, (w, to, cc) => {
+  const a = w.controller.state.attempt
+  assert.equal(a.email, to)
+  assert.equal(a.care.email, cc, 'the CC destination must be shown exactly before consent (CLOUD-10)')
+})
+R.Then(/^every outbound request refused redirects$/, (w) => {
+  assert.ok(w.calls.length > 0)
+  for (const c of w.calls) assert.equal(c.redirect, 'error', `${c.method} ${c.host}${c.path} may follow a redirect`)
+})
+R.Given(/^FacePhys will return heart rate (\d+), RMSSD (\d+), SDNN (\d+) and breathing rate (\d+) with no signal quality field$/, (w, hr, rm, sd, br) => {
+  w.process.push({ type: 'result', body: { ok: true, result: { heartRate: +hr, hrv: { rmssd: +rm, sdnn: +sd }, breathingRate: +br } } })
+})
+R.Given(/^no upload host is pinned$/, (w) => { delete w.env.FACEPHYS_UPLOAD_HOSTS })
+R.When(/^staff run the free FacePhys preflight on this tablet$/, async (w) => {
+  const req = new Request('https://kiosk.test/api/wellness/health?probe=facephys', { headers: w.headers() })
+  await w.capture(await handleHealth(req, w.deps()))
+})
+R.Then(/^the preflight names the upload host "([^"]+)" as not pinned$/, (w, host) => {
+  const b = w.lastReply.body
+  assert.equal(b.facephysAuth, 'ok')
+  assert.equal(b.uploadHost, host)
+  assert.equal(b.uploadHostPinned, false)
+  assert.ok(!w.lastReply.text.includes('Signature'), 'the signed upload URL must never be returned')
+})
+R.Then(/^no video was uploaded and no process request was sent$/, (w) => {
+  assert.equal(w.callsTo(HOSTS.oss).length, 0)
+  assert.equal(w.processCalls().length, 0)
+})
+R.Given(/^consent records are also mailed to "([^"]+)"$/, (w, to) => { w.env.CONSENT_RECORD_TO = to })
+R.Then(/^exactly (\d+) consent-record email went to "([^"]+)" with no other email address or reading in it$/, (w, n, to) => {
+  const recs = w.recordMails()
+  assert.equal(recs.length, +n)
+  assert.deepEqual(recs[0].body.to, [to])
+  const text = JSON.stringify({ subject: recs[0].body.subject, text: recs[0].body.text, html: recs[0].body.html })
+  assert.ok(!text.includes('@'), 'an email address entered the record email')
+  assert.ok(!/[:[,]\s*(72|41|55|0\.9)\b/.test(text), 'a reading entered the record email')
+})
+R.Given(/^FacePhys takes (\d+) seconds and then returns heart rate (\d+), RMSSD (\d+), SDNN (\d+) and breathing rate (\d+) with signal quality ([\d.]+)$/, (w, secs, hr, rm, sd, br, q) => {
+  w.process.push({ type: 'result', delayMs: +secs * 1000, body: vendorResult(+hr, +rm, +sd, +br, +q) })
+})
+R.Then(/^no consent-record email went to "([^"]+)"$/, (w) => { assert.equal(w.recordMails().length, 0) })
+R.Then(/^the consent record line is still written$/, (w) => {
+  assert.equal(w.records().length, 1)
+  assert.ok(w.logs.some((l) => JSON.parse(l).event === 'consent_record_email_skipped'), 'the skip must be logged')
 })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())
