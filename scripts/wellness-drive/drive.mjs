@@ -1,0 +1,56 @@
+// Local runtime drive of /scan: headless Google Chrome with a fake camera, against `next start` on 127.0.0.1:3107
+// and mock-vendors.mjs on 127.0.0.1:4810. No real vendor, charge or email. See README.md in this folder.
+import { createRequire } from 'node:module'
+// Any checkout with playwright-core installed: PLAYWRIGHT_FROM=<that checkout's package.json>
+const require = createRequire(process.env.PLAYWRIGHT_FROM || new URL('../../package.json', import.meta.url).pathname)
+const { chromium } = require('playwright-core')
+const BASE = 'http://127.0.0.1:3107'
+const out = (k, v) => console.log(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] })
+try {
+  // 1 · an unenrolled tablet is refused before any vendor call
+  const stranger = await (await browser.newContext()).newPage()
+  await stranger.goto(`${BASE}/scan`)
+  await stranger.getByRole('button', { name: 'Start' }).click()
+  await stranger.getByLabel('Booking number').fill('501')
+  await stranger.getByLabel('Email you booked with').fill('guest@example.com')
+  await stranger.getByRole('button', { name: 'Continue' }).click()
+  out('unenrolled', await stranger.getByRole('alert').innerText())
+  // 2 · enrol this tablet
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  await page.goto(`${BASE}/scan/enroll`)
+  await page.getByLabel('Set-up code').fill('drive-enroll-code-0001')
+  await page.getByRole('button', { name: 'Set up' }).click()
+  out('enrolled', await page.getByText('This tablet is set up').innerText())
+  out('cookie', (await ctx.cookies()).map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite })))
+  // 3 · the guest journey
+  const resp = await page.goto(`${BASE}/scan`)
+  const hdr = resp.headers()
+  out('scan headers', { cache: hdr['cache-control'], permissions: hdr['permissions-policy'], robots: hdr['x-robots-tag'], referrer: hdr['referrer-policy'] })
+  out('mp4 recorder supported', await page.evaluate(() => ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4'].filter((t) => MediaRecorder.isTypeSupported(t))))
+  await page.getByRole('button', { name: 'Start' }).click()
+  await page.getByLabel('Booking number').fill('501')
+  await page.getByLabel('Email you booked with').fill('Guest@Example.com')
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.getByText('Optional wellness check').waitFor()
+  const boxes = page.getByRole('checkbox')
+  out('checkboxes', await boxes.count())
+  out('share unticked by default', !(await boxes.nth(2).isChecked()))
+  out('camera button disabled before consent', await page.getByRole('button', { name: 'Turn on the camera' }).isDisabled())
+  await boxes.nth(0).check(); await boxes.nth(1).check(); await boxes.nth(2).check()
+  await page.getByRole('button', { name: 'Turn on the camera' }).click()
+  await page.getByRole('button', { name: 'Start my scan' }).waitFor()
+  out('camera live', await page.evaluate(() => { const v = document.querySelector('video'); return !!(v && v.srcObject && v.srcObject.getVideoTracks()[0]?.readyState === 'live') }))
+  await page.getByRole('button', { name: 'Start my scan' }).click()
+  await page.getByText('Your wellness indicators').waitFor({ timeout: 90_000 })
+  out('result', (await page.locator('main').innerText()).replace(/\s+/g, ' ').slice(0, 420))
+  out('camera off after scan', await page.evaluate(() => { const v = document.querySelector('video'); return !v.srcObject }))
+  await page.screenshot({ path: new URL('./result.png', import.meta.url).pathname, fullPage: true })
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.getByRole('button', { name: 'Start' }).waitFor()
+  out('after Done', (await page.locator('main').innerText()).replace(/\s+/g, ' ').slice(0, 120))
+  out('no result text after reset', !(await page.locator('main').innerText()).includes('68 bpm'))
+} finally { await browser.close() }
+const calls = await (await fetch('http://127.0.0.1:4810/__calls')).json()
+out('vendor calls', calls)
