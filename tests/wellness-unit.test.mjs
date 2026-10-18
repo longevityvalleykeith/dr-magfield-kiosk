@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
-import { signedHeaders, normalizeUploadUrl } from '../lib/wellness/facephys.ts'
+import { signedHeaders, normalizeUploadUrl, uploadHostAllowed } from '../lib/wellness/facephys.ts'
 import { normalizeResult, keyPaths } from '../lib/wellness/result.ts'
 import { matchBooking, localDay, bookingDay } from '../lib/wellness/match.ts'
 import { parseBooking } from '../lib/wellness/calendesk.ts'
@@ -28,6 +28,16 @@ test('FacePhys signing is Base64(HMAC-SHA256(secret, unix-seconds)) with the doc
 test('upload URL: %2F is restored in the path only; the signed query stays byte-exact', () => {
   assert.equal(normalizeUploadUrl('https://o.test/a%2Fb.mp4?Sig=x%2Fy'), 'https://o.test/a/b.mp4?Sig=x%2Fy')
   assert.equal(normalizeUploadUrl('https://o.test/a%2fb.mp4'), 'https://o.test/a/b.mp4')
+})
+
+test('upload origin: https only, optional host allowlist, loopback only for a loopback test double', () => {
+  const cfg = { baseUrl: 'https://www.facephys.com', keyId: 'k', secretKey: 's', uploadHosts: [] }
+  assert.equal(uploadHostAllowed('https://b.oss-ap-southeast-3.aliyuncs.com/x.mp4?sig=1', cfg), 'b.oss-ap-southeast-3.aliyuncs.com')
+  assert.equal(uploadHostAllowed('http://b.example.com/x.mp4', cfg), null)
+  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', cfg), null, 'no plaintext upload in production')
+  assert.equal(uploadHostAllowed('https://evil.example/x.mp4', { ...cfg, uploadHosts: ['aliyuncs.com'] }), null)
+  assert.equal(uploadHostAllowed('https://b.oss-cn-hangzhou.aliyuncs.com/x', { ...cfg, uploadHosts: ['aliyuncs.com'] }), 'b.oss-cn-hangzhou.aliyuncs.com')
+  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', { ...cfg, baseUrl: 'http://127.0.0.1:4810' }), '127.0.0.1')
 })
 
 test('results: only the four admitted indicators survive; everything else FacePhys returns is dropped', () => {
