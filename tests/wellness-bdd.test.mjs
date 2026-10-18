@@ -12,8 +12,9 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRegistry, runFeature } from './bdd/gherkin.mjs'
 import { handleEnroll, handleBooking, handleScan, handleHealth } from '../lib/wellness/http.ts'
+import * as httpHandlers from '../lib/wellness/http.ts'
 import { KioskController, MESSAGES } from '../lib/wellness/controller.ts'
-import { CONSENT_VERSION } from '../lib/wellness/consent.ts'
+import { CONSENT_VERSION, CONSENT_TEXT } from '../lib/wellness/consent.ts'
 import { Brakes } from '../lib/wellness/limits.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -96,9 +97,16 @@ class World {
     return {
       booking: async ({ bookingId, email }) => {
         const req = new Request('https://kiosk.test/api/wellness/booking', {
-          method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ bookingId, email }),
+          method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify(bookingId ? { bookingId, email } : { email }),
         })
         const r = await this.capture(await handleBooking(req, this.deps()))
+        return { status: r.status, body: r.body }
+      },
+      verify: async ({ challengeToken, email, code }) => {
+        const req = new Request('https://kiosk.test/api/wellness/verify', {
+          method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ challengeToken, email, code }),
+        })
+        const r = await this.capture(await httpHandlers.handleVerify(req, this.deps()))
         return { status: r.status, body: r.body }
       },
       scan: async (input) => {
@@ -156,6 +164,15 @@ class World {
         return b ? json(200, { data: b }) : json(404, { message: 'Not found' })
       }
       if (u.pathname === '/api/admin/settings' && method === 'GET') return json(200, { data: { company_name: 'test' } })
+      if (u.pathname === '/api/admin/bookings/v2' && method === 'GET') {
+        const q = u.searchParams
+        const from = q.get('booking_date_from'), to = q.get('booking_date_to')
+        const statuses = (q.get('status_ids') || '').split(',').filter(Boolean)
+        const rows = [...this.bookings.values()]
+          .filter((b) => (!from || b.start_date >= from) && (!to || b.start_date <= to) && (statuses.length === 0 || statuses.includes(b.status)))
+          .map((b) => (this.listOmitsEmail ? { ...b, user: undefined } : b))
+        return json(200, { data: rows, current_page: 1, last_page: 1, per_page: 100, total: rows.length })
+      }
       const e = /^\/api\/admin\/employees\/(\d+)$/.exec(u.pathname)
       if (e && method === 'GET') {
         const emp = this.employees.get(Number(e[1]))
@@ -172,7 +189,10 @@ class World {
 
   callsTo(...hosts) { return this.calls.filter((c) => hosts.includes(c.host)) }
   processCalls() { return this.calls.filter((c) => c.host === HOSTS.facephys && c.path === '/api/v3/video/process') }
-  mails() { return this.callsTo(HOSTS.mail).filter((m) => !(m.body.to || []).includes(this.env.CONSENT_RECORD_TO)) }
+  mails() { return this.callsTo(HOSTS.mail).filter((m) => !(m.body.to || []).includes(this.env.CONSENT_RECORD_TO) && !String(m.headers['idempotency-key'] || '').startsWith('code-')) }
+  /** One-time-code emails (Idempotency-Key "code-…"), kept apart from result and record emails. */
+  codeMails() { return this.callsTo(HOSTS.mail).filter((m) => String(m.headers['idempotency-key'] || '').startsWith('code-')) }
+  lastCode() { const m = this.codeMails().at(-1); const hit = m && /\b(\d{6})\b/.exec(m.body.text || ''); return hit ? hit[1] : null }
   recordMails() { return this.callsTo(HOSTS.mail).filter((m) => this.env.CONSENT_RECORD_TO && (m.body.to || []).includes(this.env.CONSENT_RECORD_TO)) }
   /** The mail provider dedupes on Idempotency-Key, so a replayed attempt is one email. */
   distinctMails() {
@@ -234,10 +254,16 @@ R.Given(/^the wellness check is switched off$/, (w) => { w.env.SCANS_ENABLED = '
 
 // ── Guest actions ─────────────────────────────────────────────────────
 R.When(/^the guest declines the wellness check$/, (w) => { w.controller.decline() })
-R.When(/^the guest confirms booking (\d+) with "([^"]+)"$/, async (w, id, email) => { w.controller.start(); await w.controller.submitBooking(id, email) })
-R.Given(/^the guest confirmed booking (\d+) with "([^"]+)"$/, async (w, id, email) => {
+/** Confirms a booking through whichever gate the kiosk has: a direct match, or the code emailed to the booking's inbox. */
+async function confirm(w, id, email) {
   w.controller.start()
+  const before = w.codeMails().length
   await w.controller.submitBooking(id, email)
+  if (w.controller.state.screen === 'code' && w.codeMails().length > before) await w.controller.submitCode(w.lastCode())
+}
+R.When(/^the guest confirms booking (\d+) with "([^"]+)"$/, async (w, id, email) => { await confirm(w, id, email) })
+R.Given(/^the guest confirmed booking (\d+) with "([^"]+)"$/, async (w, id, email) => {
+  await confirm(w, id, email)
   assert.equal(w.controller.state.screen, 'consent', `booking not matched: ${w.lastReply?.text}`)
 })
 R.Given(/^the guest agreed to processing and email delivery$/, async (w) => {
@@ -300,14 +326,19 @@ R.Then(/^the kiosk is refused with "([A-Z_]+)"$/, (w, code) => {
   assert.equal(w.controller.state.errorCode, code)
 })
 R.Then(/^the booking is refused with "([A-Z_]+)"$/, (w, reason) => {
-  assert.equal(w.lastReply.status, 409)
-  assert.equal(w.lastReply.body.code, 'BOOKING_NOT_MATCHED')
+  // The guest never reaches consent and no code is sent. The reply itself is the same as for a match (no oracle).
+  assert.notEqual(w.controller.state.screen, 'consent')
+  assert.equal(w.codeMails().length, 0, 'no code goes out for a refused booking')
   const line = w.logs.map((l) => JSON.parse(l)).find((l) => l.event === 'booking_refused')
   assert.ok(line && line.reasons.includes(reason), `logged reasons: ${line?.reasons}`)
 })
-R.Then(/^the kiosk shows the same message as for a mismatched booking$/, (w) => {
-  assert.equal(w.controller.state.errorCode, 'BOOKING_NOT_MATCHED')
-  assert.equal(w.controller.state.message, MESSAGES.BOOKING_NOT_MATCHED)
+const shape = (r) => ({ status: r.status, kind: r.body?.status, code: r.body?.code ?? null, keys: Object.keys(r.body || {}).sort().join(',') })
+R.Then(/^the kiosk shows the same message as for a mismatched booking$/, async (w) => {
+  const unknown = shape(w.lastReply)
+  w.bookings.set(9998, { ...w.bookings.get(501), id: 9998, location: { id: 9007, location_id: 7 } })
+  const mismatched = shape(await w.api().booking({ bookingId: '9998', email: 'guest@example.com' }))
+  assert.deepEqual(unknown, mismatched)
+  assert.notEqual(w.controller.state.screen, 'consent')
 })
 R.Then(/^FacePhys received exactly (\d+) presign, (\d+) upload and (\d+) process request$/, (w, p, u, pr) => {
   assert.equal(w.callsTo(HOSTS.facephys).filter((c) => c.path === '/api/v2/video/upload/presign').length, +p)
@@ -520,8 +551,7 @@ R.Then(/^the refusal log names location (\d+) and service (\d+) and no email add
 const OK = { ok: true, result: { heartRate: 72, hrv: { rmssd: 41, sdnn: 55 }, breathingRate: 14, sqi: 0.9 } }
 async function completeCheck(w, id, email) {
   w.controller.reset()
-  w.controller.start()
-  await w.controller.submitBooking(String(id), email)
+  await confirm(w, String(id), email)
   assert.equal(w.controller.state.screen, 'consent', `booking ${id}: ${w.lastReply?.body?.code}`)
   w.controller.setConsent('processing', true)
   w.controller.setConsent('emailResults', true)
@@ -540,7 +570,9 @@ R.Given(/^the guest already completed (\d+) checks for booking (\d+) today$/, as
   mark(w)
 })
 R.Given(/^the guest holds a matched attempt for booking (\d+) from earlier$/, async (w, id) => {
-  const r = await w.api().booking({ bookingId: id, email: w.bookings.get(Number(id)).user.email })
+  const email = w.bookings.get(Number(id)).user.email
+  let r = await w.api().booking({ bookingId: id, email })
+  if (r.body.status === 'code_sent') r = await w.api().verify({ challengeToken: r.body.challengeToken, email, code: w.lastCode() })
   assert.equal(r.body.status, 'matched')
   w.heldAttempt = { token: r.body.attemptToken, email: w.bookings.get(Number(id)).user.email }
 })
@@ -562,7 +594,8 @@ R.Given(/^the client "([^"]+)" had (\d+) booking lookups refused in the last 10 
   w.clientIp = ip
   for (let i = 0; i < Number(n); i++) {
     const r = await w.api().booking({ bookingId: String(9000 + i), email: 'guest@example.com' })
-    assert.equal(r.body.code, 'BOOKING_NOT_MATCHED')
+    assert.notEqual(r.body.status, 'matched')
+    assert.notEqual(r.status, 429)
   }
   mark(w)
 })
@@ -574,6 +607,46 @@ R.Given(/^(\d+) booking lookups from different clients reached Calendesk in the 
   }
   w.clientIp = '192.0.2.200'
   mark(w)
+})
+
+// ── phone-first, inbox key (Keith 10-19) ─────────────────────────────
+R.When(/^the guest asks for a code with "([^"]+)"$/, async (w, email) => {
+  w.controller.reset(); w.controller.start()
+  w.mark = { ...(w.mark || {}), codes: w.codeMails().length }
+  await w.controller.submitBooking('', email)
+})
+R.Given(/^the guest asked for a code with "([^"]+)" (\d+) times$/, async (w, email, n) => {
+  for (let i = 0; i < Number(n); i++) { w.controller.reset(); w.controller.start(); await w.controller.submitBooking('', email) }
+  w.mark = { ...(w.mark || {}), codes: w.codeMails().length }
+  assert.equal(w.mark.codes, Number(n), 'each of the first requests sent a code')
+})
+R.Then(/^a 6-digit code was emailed to "([^"]+)" and to no one else$/, (w, to) => {
+  const mails = w.codeMails()
+  assert.equal(mails.length, 1)
+  assert.deepEqual(mails[0].body.to, [to])
+  assert.equal(mails[0].body.cc, undefined)
+  assert.match(w.lastCode() || '', /^\d{6}$/)
+  assert.ok(!JSON.stringify(w.lastReply.body).includes(w.lastCode()), 'the code never comes back to the page')
+})
+R.Then(/^no code email was sent$/, (w) => { assert.equal(w.codeMails().length, 0) })
+R.Then(/^no further code email was sent$/, (w) => { assert.equal(w.codeMails().length, w.mark.codes) })
+R.When(/^the guest enters the emailed code$/, async (w) => { await w.controller.submitCode(w.lastCode()) })
+R.When(/^the guest enters a wrong code (\d+) times$/, async (w, n) => {
+  const wrong = String((Number(w.lastCode()) + 1) % 1_000_000).padStart(6, '0')
+  for (let i = 0; i < Number(n); i++) await w.controller.submitCode(wrong)
+})
+R.When(/^(\d+) minutes pass$/, (w, n) => { w.now = new Date(w.now.getTime() + Number(n) * 60_000) })
+R.Then(/^the reply has the same shape as the reply for "([^"]+)"$/, async (w, other) => {
+  const mine = shape(w.lastReply)
+  const theirs = shape(await w.api().booking({ bookingId: '', email: other }))
+  assert.deepEqual(mine, theirs)
+})
+R.Given(/^Calendesk lists bookings without customer emails$/, (w) => { w.listOmitsEmail = true })
+R.When(/^the phone hides the page$/, (w) => { w.controller.onHidden() })
+R.Then(/^the consent text says the check is for the person who received the code$/, (w) => {
+  assert.equal(w.controller.state.screen, 'consent')
+  assert.ok(CONSENT_TEXT.en.points.some((p) => p.includes('person who received the code')))
+  assert.ok(CONSENT_TEXT.ms.points.some((p) => p.includes('orang yang menerima kod')))
 })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())
