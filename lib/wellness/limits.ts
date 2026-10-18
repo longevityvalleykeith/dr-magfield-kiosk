@@ -10,6 +10,11 @@ const HOUR = 3_600_000
 const newAttempts = new Map<string, number[]>()
 const submissions = new Map<string, number>()
 let enrollFailures: number[] = []
+const dispatched = new Set<string>()
+
+/** An attempt whose process request was sent. Unless same-key retry is on, it is never sent again (stop and reconcile). */
+export function markDispatched(attemptId: string): void { if (dispatched.size > 5000) dispatched.clear(); dispatched.add(attemptId) }
+export function wasDispatched(attemptId: string): boolean { return dispatched.has(attemptId) }
 
 export function allowSubmission(deviceId: string, attemptId: string, nowMs: number): boolean {
   const n = submissions.get(attemptId) ?? 0

@@ -22,6 +22,8 @@ export interface WellnessConfig {
   retention: { policyVersion: string; days: number | null }
   scanSeconds: number
   minQuality: number
+  allowMissingQuality: boolean
+  sameKeyRetry: boolean
 }
 
 const text = (v: string | undefined): string => (v ?? '').trim()
@@ -59,10 +61,16 @@ export function readConfig(env: Env): WellnessConfig {
     retention: { policyVersion: text(env.CONSENT_RETENTION_POLICY) || 'unset', days: text(env.CONSENT_RETENTION_DAYS) ? int(env.CONSENT_RETENTION_DAYS, 0) || null : null },
     scanSeconds: Math.min(30, Math.max(10, int(env.SCAN_SECONDS, 20))),
     minQuality: Number.isFinite(quality) && quality >= 0 && quality <= 1 ? quality : 0.5,
+    allowMissingQuality: text(env.ALLOW_MISSING_QUALITY) === '1',
+    // Off by default: an unknown outcome stops and is reconciled. Turn on only once the vendor's same-key replay is measured.
+    sameKeyRetry: text(env.SAME_KEY_RETRY) === '1',
   }
 }
 
-/** The check runs only when it is switched on AND every group it needs is configured. */
+/**
+ * The check runs only when it is switched on, every group it needs is configured, AND the upload host is pinned
+ * (FACEPHYS_UPLOAD_HOSTS, learned first from the free preflight), so no video goes to an unpinned host.
+ */
 export function isReady(c: WellnessConfig): boolean {
-  return c.switchedOn && c.facephys !== null && c.calendesk !== null && c.mail !== null && c.device !== null
+  return c.switchedOn && c.facephys !== null && c.facephys.uploadHosts.length > 0 && c.calendesk !== null && c.mail !== null && c.device !== null
 }

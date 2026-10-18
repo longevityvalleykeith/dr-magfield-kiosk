@@ -15,7 +15,7 @@ export type Screen =
   | 'result' | 'insufficient' | 'unknown' | 'failed' | 'unsupported'
 
 export interface Indicator { key: string; label: string; value: number; unit: string }
-export interface AttemptView { token: string; email: string; maskedEmail: string; care: { name: string; maskedEmail: string } | null; scanSeconds: number }
+export interface AttemptView { token: string; email: string; maskedEmail: string; care: { name: string; email: string; maskedEmail: string } | null; scanSeconds: number }
 export interface ResultView { indicators: Indicator[]; delivery: 'sent' | 'failed'; to: string; cc: string | null; ccStatus: string }
 export interface Consent { processing: boolean; emailResults: boolean; share: boolean }
 export interface KioskState {
@@ -26,6 +26,10 @@ export interface KioskState {
   result: ResultView | null
   errorCode: string | null
   message: string | null
+  /** The server says a same-attempt resubmission is safe. */
+  retryable: boolean
+  /** Short reference of an unknown outcome, quoted to staff for reconciliation. */
+  reference: string | null
 }
 
 export interface ApiReply { status: number; body: Record<string, unknown> | null }
@@ -55,12 +59,13 @@ export const MESSAGES: Record<string, string> = {
   VIDEO_UNSUPPORTED: 'This tablet can’t record a video the analysis can use. Your visit continues as normal.',
   CAMERA_UNAVAILABLE: 'The camera isn’t available. Your visit continues as normal.',
   ATTEMPT_INVALID: 'This check has expired. Please start again.',
+  ATTEMPT_ALREADY_SUBMITTED: 'This check was already sent. Please ask the CARE team to look it up.',
   TOO_MANY_SCANS: 'Please wait a moment before the next check.',
   FAILED: 'The wellness check couldn’t be completed and no results were sent. Your visit continues as normal.',
 }
 
 const noConsent = (): Consent => ({ processing: false, emailResults: false, share: false })
-export const initialState = (): KioskState => ({ screen: 'welcome', busy: false, attempt: null, consent: noConsent(), result: null, errorCode: null, message: null })
+export const initialState = (): KioskState => ({ screen: 'welcome', busy: false, attempt: null, consent: noConsent(), result: null, errorCode: null, message: null, retryable: false, reference: null })
 
 export class KioskController {
   state: KioskState
@@ -108,7 +113,7 @@ export class KioskController {
     if (epoch !== this.epoch) return
     const b = reply.body ?? {}
     if (b.status === 'matched' && typeof b.attemptToken === 'string') {
-      const care = b.care && typeof b.care === 'object' ? (b.care as { name: string; maskedEmail: string }) : null
+      const care = b.care && typeof b.care === 'object' ? (b.care as { name: string; email: string; maskedEmail: string }) : null
       this.set({
         busy: false, screen: 'consent', consent: noConsent(),
         attempt: { token: b.attemptToken, email: email.trim(), maskedEmail: String(b.maskedEmail ?? ''), care, scanSeconds: Number(b.scanSeconds) || this.scanSeconds },
@@ -159,9 +164,9 @@ export class KioskController {
     await this.submit(epoch)
   }
 
-  /** Resubmits the SAME attempt and clip, so FacePhys replays instead of charging again. */
+  /** Resubmits the SAME attempt and clip, and only when the server said that is safe. */
   async retrySameAttempt(): Promise<void> {
-    if (this.state.busy || !this.clip || !this.state.attempt) return
+    if (this.state.busy || !this.clip || !this.state.attempt || !this.state.retryable) return
     if (this.state.screen !== 'unknown' && this.state.screen !== 'failed' && this.state.screen !== 'result') return
     await this.submit(this.epoch)
   }
@@ -171,7 +176,7 @@ export class KioskController {
     const clip = this.clip
     if (!a || !clip) return
     const c = this.state.consent
-    this.set({ busy: true, screen: 'processing', errorCode: null, message: null })
+    this.set({ busy: true, screen: 'processing', errorCode: null, message: null, retryable: false, reference: null })
     let reply: ApiReply
     try {
       reply = await this.api.scan({ attemptToken: a.token, email: a.email, consentVersion: CONSENT_VERSION, processing: c.processing, emailResults: c.emailResults, share: c.share && a.care !== null, video: clip })
@@ -180,20 +185,27 @@ export class KioskController {
     const b = reply.body ?? {}
     // No JSON from us (network loss, a 502/504 from the platform) may come after FacePhys charged: unknown, retry-safe.
     const platformError = reply.status === 0 || (reply.status >= 500 && typeof b.status !== 'string')
-    if (platformError || b.status === 'unknown_outcome') { this.set({ busy: false, screen: 'unknown' }); return }
+    if (platformError || b.status === 'unknown_outcome') {
+      const retryable = b.retryable === true
+      if (!retryable) this.clip = null // stop and reconcile: no resubmission from this tablet
+      this.set({ busy: false, screen: 'unknown', retryable, reference: typeof b.reference === 'string' ? b.reference : null })
+      return
+    }
     if (b.status === 'completed') {
       const delivery = b.delivery === 'sent' ? 'sent' : 'failed'
-      if (delivery === 'sent') this.clip = null
+      const retryable = b.retryable === true
+      if (delivery === 'sent' || !retryable) this.clip = null
       this.set({
-        busy: false, screen: 'result',
+        busy: false, screen: 'result', retryable,
         result: { indicators: Array.isArray(b.indicators) ? (b.indicators as Indicator[]) : [], delivery, to: String(b.to ?? ''), cc: typeof b.cc === 'string' ? b.cc : null, ccStatus: typeof b.ccStatus === 'string' ? b.ccStatus : 'declined' },
       })
       return
     }
     if (b.status === 'insufficient_quality') { this.clip = null; this.set({ busy: false, screen: 'insufficient', result: null }); return }
     const code = typeof b.code === 'string' ? b.code : 'FAILED'
-    if (b.retryable !== true) this.clip = null
-    this.set({ busy: false, screen: 'failed', errorCode: code, message: MESSAGES[code] ?? MESSAGES.FAILED })
+    const retryable = b.retryable === true
+    if (!retryable) this.clip = null
+    this.set({ busy: false, screen: 'failed', errorCode: code, message: MESSAGES[code] ?? MESSAGES.FAILED, retryable })
   }
 
   cancel(): void { this.reset() }

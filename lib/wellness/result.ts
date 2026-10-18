@@ -54,8 +54,10 @@ function find(body: unknown, names: string[]): number | null {
   return null
 }
 
-export function normalizeResult(body: unknown, minQuality: number): Reading {
+export function normalizeResult(body: unknown, minQuality: number, allowMissingQuality = false): Reading {
   const q = find(body, QUALITY)
+  // With no quality field the reading cannot be shown to be good enough, so it is not one (O2O-11).
+  if (q === null && !allowMissingQuality) return { kind: 'insufficient_quality' }
   if (q !== null && (q > 1 ? q / 100 : q) < minQuality) return { kind: 'insufficient_quality' }
   const indicators: Indicator[] = []
   for (const f of FIELDS) {

@@ -157,9 +157,9 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
           <h1 className={styles.title}>{copy.title}</h1>
           <ul className={styles.points}>{copy.points.map((p) => <li key={p}>{p}</li>)}</ul>
           <label className={styles.check}><input type="checkbox" checked={s.consent.processing} onChange={(e) => c.setConsent('processing', e.target.checked)} />{copy.processing}</label>
-          <label className={styles.check}><input type="checkbox" checked={s.consent.emailResults} onChange={(e) => c.setConsent('emailResults', e.target.checked)} />{copy.emailResults} ({s.attempt.maskedEmail})</label>
+          <label className={styles.check}><input type="checkbox" checked={s.consent.emailResults} onChange={(e) => c.setConsent('emailResults', e.target.checked)} />{copy.emailResults} (To: {s.attempt.email})</label>
           {s.attempt.care && (<>
-            <label className={styles.check}><input type="checkbox" checked={s.consent.share} onChange={(e) => c.setConsent('share', e.target.checked)} />{copy.share(s.attempt.care.name)} ({s.attempt.care.maskedEmail})</label>
+            <label className={styles.check}><input type="checkbox" checked={s.consent.share} onChange={(e) => c.setConsent('share', e.target.checked)} />{copy.share(s.attempt.care.name)} (CC: {s.attempt.care.email})</label>
             <p className={styles.note}>{copy.ccNotice}</p>
           </>)}
           {s.message && <p className={styles.error} role="alert">{s.message}</p>}
@@ -199,9 +199,9 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
           <p className={styles.note}>{copy.disclaimer}</p>
           <p className={styles.lead}>{s.result.delivery === 'sent'
             ? `Your results email was sent to ${s.result.to}${s.result.ccStatus === 'sent' && s.result.cc ? `, with a copy to ${s.result.cc} (DR MAGfield CARE)` : ''}. Arrival isn’t confirmed.${s.result.ccStatus === 'unavailable' ? ' We couldn’t copy the CARE team member this time.' : ''}`
-            : 'We couldn’t send the email. You can try again: it reuses this check.'}</p>
+            : `We couldn’t send the email. Your results are on this screen${s.retryable ? '; you can try sending again, which reuses this check' : ''}.`}</p>
           <div className={styles.row}>
-            {s.result.delivery !== 'sent' && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try sending again</button>}
+            {s.result.delivery !== 'sent' && s.retryable && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try sending again</button>}
             <button className={styles.ghost} onClick={() => c.reset()}>Done</button>
           </div>
         </>)}
@@ -214,9 +214,11 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
 
         {s.screen === 'unknown' && (<>
           <h1 className={styles.title}>We’re not sure the analysis finished</h1>
-          <p className={styles.lead}>Trying again is safe: it reuses this same check rather than starting a new one. If you finish now, this kiosk can’t look the result up later.</p>
+          <p className={styles.lead}>{s.retryable
+            ? 'Trying again reuses this same check rather than starting a new one.'
+            : 'Please don’t start a new check. The CARE team can look this one up.'}{s.reference ? ` Reference: ${s.reference}.` : ''}</p>
           <div className={styles.row}>
-            <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try again</button>
+            {s.retryable && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try again</button>}
             <button className={styles.ghost} onClick={() => c.reset()}>Finish</button>
           </div>
         </>)}
@@ -225,7 +227,7 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
           <h1 className={styles.title}>Wellness check</h1>
           <p className={styles.lead}>{s.message ?? MESSAGES.FAILED}</p>
           <div className={styles.row}>
-            {s.screen === 'failed' && c.hasRecording() && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try again</button>}
+            {s.screen === 'failed' && s.retryable && c.hasRecording() && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try again</button>}
             <button className={styles.ghost} onClick={() => c.reset()}>Finish</button>
           </div>
         </>)}

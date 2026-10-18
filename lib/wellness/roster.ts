@@ -2,7 +2,8 @@
  * The CARE roster: who may be copied on a guest's results, by their Calendesk employee ID.
  *
  * T1 #164 CLOUD-03: a Calendesk employee ID alone grants nothing. A recipient must be on this
- * server-side roster, active, and at this outlet. Staff email addresses never reach the browser.
+ * server-side roster, active, and at this outlet. A staff address reaches the browser only after a booking
+ * match, as the exact CC destination shown before consent (CLOUD-10).
  */
 export interface RosterEntry { calendeskEmployeeId: number; name: string; email: string; outlets: string[]; active: boolean }
 

@@ -14,17 +14,21 @@ import { matchBooking, normalizeEmail, isEmail } from './match.ts'
 import type { MatchReason } from './match.ts'
 import { careRecipientFor } from './roster.ts'
 import type { RosterEntry } from './roster.ts'
-import { authTest, submitVideo } from './facephys.ts'
+import { authTest, presignPreflight, submitVideo } from './facephys.ts'
 import { keyPaths, normalizeResult } from './result.ts'
 import { composeResultEmail, sendEmail } from './email.ts'
 import { consentRecord } from './record.ts'
 import type { CcDecision, Delivery, Outcome, RecordInput } from './record.ts'
-import { deviceIdFrom, emailHash, enrollCodeMatches, issueAttempt, issueDevice, readAttempt } from './tokens.ts'
-import { allowSubmission, enrollBudgetLeft, noteEnrollFailure } from './limits.ts'
+import { careEmailHash, deviceIdFrom, emailHash, enrollCodeMatches, issueAttempt, issueDevice, readAttempt } from './tokens.ts'
+import { allowSubmission, enrollBudgetLeft, markDispatched, noteEnrollFailure, wasDispatched } from './limits.ts'
 import { sha256Hex } from './crypto.ts'
 import { CONSENT_VERSION } from './consent.ts'
 
-/** Worst case per scan: Calendesk 5 s + presign 6 s + upload 15 s + process 26 s + email 5 s = 57 s, under maxDuration 60. */
+/**
+ * Worst case per scan: Calendesk 4 s + presign 5 s + upload 13 s + process 25 s + email 4 s = 51 s, under maxDuration 60.
+ * The optional consent-record email (4 s) is sent only if at most 48 s have elapsed (RECORD_MAIL_DEADLINE_MS).
+ */
+const RECORD_MAIL_DEADLINE_MS = 48_000
 export interface Deps {
   env: Env
   fetch: typeof fetch
@@ -111,13 +115,19 @@ export async function handleBooking(req: Request, deps: Deps): Promise<Response>
     deps.log('booking_refused', { reasons })
     return refuse(409, 'BOOKING_NOT_MATCHED')
   }
-  const { token } = issueAttempt(secret, { bookingId, emailHash: emailHash(secret, email), careEmployeeId: care?.calendeskEmployeeId ?? null }, now.getTime())
+  const { token } = issueAttempt(secret, {
+    bookingId, emailHash: emailHash(secret, email),
+    careEmployeeId: care?.calendeskEmployeeId ?? null,
+    // Binds the exact CC address shown: if the roster address changes, the CC is dropped, never re-pointed.
+    careEmailHash: care ? careEmailHash(secret, care.email) : null,
+  }, now.getTime())
   deps.log('booking_matched', { care: care ? 'offered' : 'none' })
   return json(200, {
     status: 'matched',
     attemptToken: token,
     maskedEmail: mask(email),
-    care: care ? { name: care.name, maskedEmail: mask(care.email) } : null,
+    // The exact CC destination is shown before consent (CLOUD-10), but only after a booking match.
+    care: care ? { name: care.name, email: care.email, maskedEmail: mask(care.email) } : null,
     scanSeconds: config.scanSeconds,
   })
 }
@@ -130,6 +140,7 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   try { form = await req.formData() } catch { return refuse(400, 'BAD_REQUEST') }
   const field = (k: string): string => { const v = form.get(k); return typeof v === 'string' ? v : '' }
   const now = deps.now()
+  const started = now.getTime()
 
   const attempt = readAttempt(secret, field('attemptToken'), now.getTime())
   const email = normalizeEmail(field('email'))
@@ -154,18 +165,23 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   // The recipient is re-resolved before delivery (CLOUD-08): still the booking's own employee, still active here.
   // If not, the CC is dropped (never replaced) and the guest's own check still runs (v1.7 O2O-04).
   const resolved = share ? careRecipientFor(config.roster, attempt.careEmployeeId, config.outlet.slug) : null
-  const care = resolved && resolved.calendeskEmployeeId === read.booking.employeeId ? resolved : null
+  const care = resolved && resolved.calendeskEmployeeId === read.booking.employeeId && attempt.careEmailHash !== null
+    && careEmailHash(secret, resolved.email) === attempt.careEmailHash ? resolved : null
   const ccDecision: CcDecision = !share ? 'declined' : care ? 'agreed' : 'unavailable'
+  // Stop and reconcile (T1 #164 review): once this attempt's process request has gone out, it is not sent again
+  // unless same-key retry is switched on. A retry after a failed presign or upload is safe, because nothing was charged.
+  if (!config.sameKeyRetry && wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
   if (!allowSubmission(deviceId, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
 
   const booking = read.booking
-  const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, {
+  const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, deps.now().getTime() - started <= RECORD_MAIL_DEADLINE_MS, {
     attemptId: attempt.attemptId, tenantId: config.tenantId, calendeskAccountRef: config.calendesk!.tenant, booking,
     noticeVersion: CONSENT_VERSION, careCcDecision: ccDecision, guestEmail: email, care,
     verifiedAt: now, recordedAt: deps.now(), retention: config.retention, outcome, delivery,
   })
 
   const submission = await submitVideo(config.facephys!, { video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}` }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
+  if (submission.kind !== 'not_submitted') markDispatched(attempt.attemptId)
   if (submission.kind === 'not_submitted') {
     await record('not_submitted', 'not_attempted')
     return json(502, { status: 'failed', code: submission.code, retryable: true })
@@ -177,11 +193,12 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   }
   if (submission.kind === 'unknown_outcome') {
     await record('unknown_outcome', 'not_attempted')
-    return json(202, { status: 'unknown_outcome', retryable: true })
+    // The reference locates the consent record (attemptId) for staff reconciliation, including after a reload.
+    return json(202, { status: 'unknown_outcome', retryable: config.sameKeyRetry, reference: attempt.attemptId.slice(0, 8) })
   }
 
   deps.log('vendor_result_shape', { keys: keyPaths(submission.body) })
-  const reading = normalizeResult(submission.body, config.minQuality)
+  const reading = normalizeResult(submission.body, config.minQuality, config.allowMissingQuality)
   if (reading.kind === 'insufficient_quality') {
     await record('insufficient_quality', 'not_attempted')
     return json(200, { status: 'insufficient_quality' })
@@ -193,14 +210,15 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   const delivery = await sendEmail(config.mail!, { to: email, cc: care?.email ?? null, ...message }, `dmk-${attempt.attemptId}`, deps.fetch)
   await record('completed', delivery)
   // 'sent' means the mail service took the message, not that both mailboxes received it, and never CARE acceptance.
-  return json(200, { status: 'completed', indicators: reading.indicators, delivery, to: mask(email), cc: care ? care.name : null, ccStatus: care ? delivery : ccDecision, retryable: delivery === 'failed' })
+  return json(200, { status: 'completed', indicators: reading.indicators, delivery, to: mask(email), cc: care ? care.name : null, ccStatus: care ? delivery : ccDecision, retryable: delivery === 'failed' && config.sameKeyRetry })
 }
 
-async function writeRecord(deps: Deps, config: WellnessConfig, secret: string, f: RecordInput): Promise<void> {
+async function writeRecord(deps: Deps, config: WellnessConfig, secret: string, mayMail: boolean, f: RecordInput): Promise<void> {
   const rec = consentRecord(secret, f)
   deps.log('consent_record', { ...rec })
   const to = config.mail?.consentRecordTo
   if (!to || !config.mail) return
+  if (!mayMail) { deps.log('consent_record_email_skipped', { attemptId: rec.attemptId, reason: 'deadline' }); return }
   const text = JSON.stringify(rec, null, 2)
   await sendEmail(config.mail, { to, cc: null, subject: `Consent record ${rec.attemptId.slice(0, 8)} (${rec.outcome})`, text, html: `<pre>${text}</pre>` }, `rec-${rec.attemptId}-${rec.outcome}-${rec.delivery}`, deps.fetch)
 }
@@ -210,7 +228,10 @@ export async function handleHealth(req: Request, deps: Deps): Promise<Response> 
   const nowMs = deps.now().getTime()
   const deviceEnrolled = config.device ? deviceIdFrom(config.device.cookieSecret, req.headers.get('cookie'), nowMs) !== null : false
   const probe = new URL(req.url).searchParams.get('probe') === 'facephys' && deviceEnrolled && config.facephys !== null
-  const facephysAuth = probe ? ((await authTest(config.facephys!, deps.fetch, () => deps.now().getTime())) ? 'ok' : 'failed') : 'not_probed'
+  const clock = () => deps.now().getTime()
+  const facephysAuth = probe ? ((await authTest(config.facephys!, deps.fetch, clock)) ? 'ok' : 'failed') : 'not_probed'
+  // Free preflight: which host would receive video, and is it pinned? Hostname only, never the signed URL.
+  const preflight = probe && facephysAuth === 'ok' ? await presignPreflight(config.facephys!, deps.fetch, clock) : null
   return json(200, {
     ready: isReady(config),
     configured: {
@@ -219,5 +240,7 @@ export async function handleHealth(req: Request, deps: Deps): Promise<Response> 
     },
     deviceEnrolled,
     facephysAuth,
+    uploadHost: preflight?.host ?? null,
+    uploadHostPinned: preflight?.pinned ?? false,
   })
 }

@@ -24,6 +24,9 @@ try {
   await page.getByRole('button', { name: 'Set up' }).click()
   out('enrolled', await page.getByText('This tablet is set up').innerText())
   out('cookie', (await ctx.cookies()).map((c) => ({ name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite })))
+  // free preflight on the enrolled tablet: auth test + presign host, no upload, no charge
+  const pre = await page.goto(`${BASE}/api/wellness/health?probe=facephys`)
+  out('preflight', await pre.json())
   // 3 · the guest journey
   const resp = await page.goto(`${BASE}/scan`)
   const hdr = resp.headers()
@@ -38,6 +41,7 @@ try {
   out('checkboxes', await boxes.count())
   out('share unticked by default', !(await boxes.nth(2).isChecked()))
   out('camera button disabled before consent', await page.getByRole('button', { name: 'Turn on the camera' }).isDisabled())
+  out('consent destinations', (await page.locator('main').innerText()).match(/\(To: [^)]+\)|\(CC: [^)]+\)/g))
   await boxes.nth(0).check(); await boxes.nth(1).check(); await boxes.nth(2).check()
   await page.getByRole('button', { name: 'Turn on the camera' }).click()
   await page.getByRole('button', { name: 'Start my scan' }).waitFor()

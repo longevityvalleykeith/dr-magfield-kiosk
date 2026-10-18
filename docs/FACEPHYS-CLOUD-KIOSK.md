@@ -47,13 +47,20 @@ The pilot gate in #164 (CLOUD-17) still stands until Keith lifts it.
 5. **Server.** The server:
    - re-checks the booking, the email binding and the recipient at the point of charge;
    - presigns;
-   - PUTs the exact bytes to the presigned host, which must be https and on `FACEPHYS_UPLOAD_HOSTS` when that is set;
+   - PUTs the exact bytes to the presigned host, which must be https and on `FACEPHYS_UPLOAD_HOSTS` (required). No outbound call follows a redirect;
    - calls `POST /api/v3/video/process` with `{objectKey, capability:"rppg", confirmCharge:true, idempotencyKey:"dmk-<attemptId>", videoSha256}`.
 6. **Result.**
    - Only heart rate, RMSSD, SDNN and breathing rate survive, after a quality gate and plausibility ranges. Everything else FacePhys returns is dropped.
    - The values are shown on screen and sent as one email to the booking address, plus the CC if ticked.
    - The screen resets on Done, after 45 s, on inactivity, or when the tab is hidden.
-7. **Outcomes.** The possible outcomes are completed, insufficient quality, failed and **outcome unknown**. A lost process response is never resubmitted under a fresh key. Retrying the same attempt sends the same key and video digest, and FacePhys replays the result rather than charging again (`agent.md`).
+7. **Outcomes.** The possible outcomes are completed, insufficient quality, failed and **outcome unknown**. A lost process response is never resubmitted under a fresh key.
+   - **By default an unknown outcome stops.** There is no retry, the clip is dropped, and the screen shows a reference (the first 8 characters of the attempt ID in the consent record) for staff to reconcile.
+   - With `SAME_KEY_RETRY=1`, a retry sends the same key and video digest, and FacePhys says it replays rather than charging again (`agent.md`). That claim is unmeasured.
+   - A retry after a failed presign or upload is always allowed, because nothing was charged.
+
+**Time budget:** Calendesk 4 s, presign 5 s, upload 13 s, process 25 s and email 4 s add up to 51 s, under the 60 s function limit. The optional consent-record email is sent only if at most 48 s have elapsed; otherwise it is skipped and logged, and the record line is still written.
+
+**The consent screen** shows the exact To address and the exact CC address. If the CC's roster address changes after the match, the CC is dropped and never re-pointed.
 
 ## Data map: who holds what
 
@@ -102,7 +109,9 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | `FACEPHYS_BASE_URL` | `https://www.facephys.com` | no |
 | `FACEPHYS_KEY_ID` | the Agent Key ID from the FacePhys console (an identifier the API echoes back, not a secret) | no |
 | `FACEPHYS_SECRET_KEY` | the Agent Key secret from the FacePhys console. Paste it into Vercel only: never into chat, the repo or a committed `.env` | **yes** |
-| `FACEPHYS_UPLOAD_HOSTS` | optional, comma-separated host suffixes (for example `aliyuncs.com`). Fill it in after the first scan logs `vendor_upload_host`. | no |
+| `FACEPHYS_UPLOAD_HOSTS` | **Required**: comma-separated host suffixes. Learn the host first from the free preflight (`/api/wellness/health?probe=facephys` on an enrolled tablet returns `uploadHost`). The check stays off until this is set. | no |
+| `ALLOW_MISSING_QUALITY` | optional. `1` lets a result with no signal-quality field count; by default it doesn't. Decide after the first real `vendor_result_shape` line. | no |
+| `SAME_KEY_RETRY` | optional, **off by default**. Off means an unknown outcome **stops**: no retry button, and a resend of that attempt is refused (`ATTEMPT_ALREADY_SUBMITTED`); the screen shows a reference for staff. `1` allows same-key retries. Turn it on only after FacePhys's replay (no second charge) has been measured. | no |
 | `CALENDESK_API_KEY` | a Calendesk API key; a separate key from Foundry's if Calendesk allows one. This code only ever sends a GET for one booking. | **yes** |
 | `CALENDESK_TENANT` | the Calendesk tenant, the same value as Foundry's `CALENDESK_TENANT` | no |
 | `RESEND_API_KEY` | a Resend key with **sending access only** | **yes** |
@@ -115,7 +124,7 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | `KIOSK_TENANT` | the LV tenant on the record; default `dr-magfield` | no |
 | `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE` | optional overrides; the defaults are 20 · 0.5 · 6 · 13,14 · krpm · DR MAGfield KRPM · Asia/Kuala_Lumpur | no |
 
-**Check the setup without a charge:** open `/api/wellness/health?probe=facephys` on an enrolled tablet. It returns booleans plus FacePhys `auth/test`, never a value.
+**Check the setup without a charge:** open `/api/wellness/health?probe=facephys` on an enrolled tablet. It returns booleans, FacePhys `auth/test`, and a free presign preflight. The preflight gives `uploadHost` (hostname only) and `uploadHostPinned`, and never a signed URL or any value.
 
 ## Clause map against T1 #164
 
@@ -127,7 +136,7 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | CLOUD-04 one contract | A server-owned adapter, with the upload origin validated and no CORS assumed | unit tests; census |
 | CLOUD-04 shared with the PWA | **GAP**: the adapter lives in this repo only | — |
 | CLOUD-05 orchestration | No LV outbox. Recovery uses the vendor's same-key replay. | K-09 |
-| CLOUD-06 retries | A stable key plus the video digest; never a fresh key | K-08, K-09 |
+| CLOUD-06 retries | A stable key plus the video digest; never a fresh key. By default an unknown outcome stops and is reconciled. | K-08, K-09, K-23 |
 | CLOUD-07 / O2O-03 phone continuation | **GAP**, not built: results show on the kiosk (Keith's choice) | — |
 | CLOUD-08 flow | Match → consent → camera → confirm → submit → outcomes → delivery | K-05, K-10, K-15 |
 | CLOUD-09 / O2O-12 Edge mode | Not applicable: this surface has no Edge mode, so nothing falls back | — |

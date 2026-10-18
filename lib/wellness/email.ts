@@ -58,7 +58,8 @@ export async function sendEmail(cfg: Mail, msg: Outgoing, idempotencyKey: string
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify({ from: cfg.from, to: [msg.to], ...(msg.cc ? { cc: [msg.cc] } : {}), subject: msg.subject, text: msg.text, html: msg.html }),
-      signal: AbortSignal.timeout(5_000),
+      redirect: 'error',
+      signal: AbortSignal.timeout(4_000),
     })
     return res.ok ? 'sent' : 'failed'
   } catch { return 'failed' }

@@ -59,7 +59,8 @@ export async function readBooking(cfg: NonNullable<WellnessConfig['calendesk']>,
     res = await fetchImpl(`${cfg.baseUrl}/admin/bookings/${bookingId}`, {
       method: 'GET',
       headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' },
-      signal: AbortSignal.timeout(5_000),
+      redirect: 'error',
+      signal: AbortSignal.timeout(4_000),
     })
   } catch { return { ok: false, reason: 'BOOKING_UNAVAILABLE' } }
   if (res.status === 404) return { ok: false, reason: 'BOOKING_NOT_FOUND' }

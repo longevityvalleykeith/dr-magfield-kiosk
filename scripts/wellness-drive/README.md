@@ -5,7 +5,7 @@ This drive needs a real browser, which CI does not have. It runs headless Google
 ```
 npm ci && npm run build
 node scripts/wellness-drive/mock-vendors.mjs &
-SCANS_ENABLED=1 FACEPHYS_BASE_URL=http://127.0.0.1:4810 FACEPHYS_KEY_ID=drive-kid FACEPHYS_SECRET_KEY=drive-fp-secret \
+SCANS_ENABLED=1 FACEPHYS_BASE_URL=http://127.0.0.1:4810 FACEPHYS_KEY_ID=drive-kid FACEPHYS_SECRET_KEY=drive-fp-secret FACEPHYS_UPLOAD_HOSTS=127.0.0.1 \
   CALENDESK_API_BASE=http://127.0.0.1:4810/api CALENDESK_API_KEY=drive-cd-key CALENDESK_TENANT=drive-tenant \
   RESEND_API_KEY=drive-rs-key EMAIL_API_BASE=http://127.0.0.1:4810 EMAIL_FROM='DR MAGfield <kiosk@drmagfield.test>' \
   KIOSK_ENROLL_CODE=drive-enroll-code-0001 KIOSK_COOKIE_SECRET=drive-cookie-secret-0123456789abcdef0123 SCAN_SECONDS=10 \

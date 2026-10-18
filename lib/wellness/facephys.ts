@@ -62,7 +62,8 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
     const res = await fetchImpl(`${cfg.baseUrl}/api/v2/video/upload/presign`, {
       method: 'POST',
       headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(6_000),
+      redirect: 'error',
+      signal: AbortSignal.timeout(5_000),
     })
     if (res.status === 401 || res.status === 403) return { kind: 'refused', code: 'VENDOR_AUTH', httpStatus: res.status }
     if (!res.ok) return { kind: 'not_submitted', code: 'PRESIGN_FAILED' }
@@ -77,7 +78,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
 
   // 2 · upload the exact bytes that were hashed.
   try {
-    const put = await fetchImpl(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: a.video, signal: AbortSignal.timeout(15_000) })
+    const put = await fetchImpl(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: a.video, redirect: 'error', signal: AbortSignal.timeout(13_000) })
     if (!put.ok) return { kind: 'not_submitted', code: 'UPLOAD_FAILED' }
   } catch { return { kind: 'not_submitted', code: 'UPLOAD_FAILED' } }
 
@@ -88,7 +89,8 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
       method: 'POST',
       headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' },
       body: JSON.stringify({ objectKey, capability: 'rppg', confirmCharge: true, idempotencyKey: a.idempotencyKey, videoSha256: a.videoSha256 }),
-      signal: AbortSignal.timeout(26_000),
+      redirect: 'error',
+      signal: AbortSignal.timeout(25_000),
     })
   } catch { return { kind: 'unknown_outcome' } }
   if (res.status === 200) {
@@ -104,9 +106,28 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
 /** GET /api/agent/auth/test: side-effect free; proves the key placement without a charge. */
 export async function authTest(cfg: FacePhys, fetchImpl: typeof fetch, nowMs: () => number): Promise<boolean> {
   try {
-    const res = await fetchImpl(`${cfg.baseUrl}/api/agent/auth/test`, { method: 'GET', headers: signedHeaders(cfg, nowMs()), signal: AbortSignal.timeout(8000) })
+    const res = await fetchImpl(`${cfg.baseUrl}/api/agent/auth/test`, { method: 'GET', headers: signedHeaders(cfg, nowMs()), redirect: 'error', signal: AbortSignal.timeout(5_000) })
     if (!res.ok) return false
     const body = (await res.json()) as { ok?: unknown }
     return body.ok === true
   } catch { return false }
+}
+
+/**
+ * Free preflight (presign consumes no tokens): which host would receive the video, and is it pinned?
+ * Returns the hostname only. The signed uploadUrl never leaves this function.
+ */
+export async function presignPreflight(cfg: FacePhys, fetchImpl: typeof fetch, nowMs: () => number): Promise<{ host: string | null; pinned: boolean }> {
+  try {
+    const res = await fetchImpl(`${cfg.baseUrl}/api/v2/video/upload/presign`, {
+      method: 'POST', headers: { ...signedHeaders(cfg, nowMs()), 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(5_000),
+    })
+    if (!res.ok) return { host: null, pinned: false }
+    const body = (await res.json()) as { uploadUrl?: unknown }
+    if (typeof body.uploadUrl !== 'string') return { host: null, pinned: false }
+    const url = normalizeUploadUrl(body.uploadUrl)
+    let host: string
+    try { host = new URL(url).hostname.toLowerCase() } catch { return { host: null, pinned: false } }
+    return { host, pinned: cfg.uploadHosts.length > 0 && uploadHostAllowed(url, cfg) !== null }
+  } catch { return { host: null, pinned: false } }
 }
