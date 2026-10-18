@@ -11,7 +11,7 @@ import { readConfig, isReady } from './config.ts'
 import type { Env, WellnessConfig } from './config.ts'
 import { calendeskReachable, readBooking, readEmployee } from './calendesk.ts'
 import type { BookingFacts } from './calendesk.ts'
-import { matchBooking, normalizeEmail, isEmail } from './match.ts'
+import { matchBooking, normalizeEmail, isEmail, localDay } from './match.ts'
 import type { MatchReason } from './match.ts'
 import { careRecipientFor } from './roster.ts'
 import type { RosterEntry } from './roster.ts'
@@ -21,7 +21,8 @@ import { composeResultEmail, sendEmail } from './email.ts'
 import { consentRecord } from './record.ts'
 import type { CcDecision, Delivery, Outcome, RecordInput } from './record.ts'
 import { careEmailHash, deviceIdFrom, emailHash, enrollCodeMatches, issueAttempt, issueDevice, readAttempt } from './tokens.ts'
-import { allowSubmission, enrollBudgetLeft, markDispatched, noteEnrollFailure, probeBudgetLeft, wasDispatched } from './limits.ts'
+import { liveBrakes } from './limits.ts'
+import type { Brakes } from './limits.ts'
 import { sha256Hex } from './crypto.ts'
 import { CONSENT_VERSION } from './consent.ts'
 
@@ -35,7 +36,11 @@ export interface Deps {
   fetch: typeof fetch
   now: () => Date
   log: (event: string, fields: Record<string, unknown>) => void
+  /** The in-process brakes. Production shares one set per instance; each test scenario brings its own. */
+  brakes?: Brakes
 }
+
+const brakesOf = (deps: Deps): Brakes => deps.brakes ?? liveBrakes
 
 const MIN_VIDEO = 1024
 const MAX_VIDEO = 4_200_000 // under the 4.5 MB serverless request limit
@@ -88,17 +93,25 @@ export async function handleEnroll(req: Request, deps: Deps): Promise<Response> 
   if (!config.device) return refuse(503, 'CHECK_DISABLED')
   if (config.device.enrollCode === null) return json(200, { status: 'enrolment_not_required' })
   const now = deps.now().getTime()
-  if (!enrollBudgetLeft(now)) return refuse(429, 'TOO_MANY_ATTEMPTS')
+  if (!brakesOf(deps).enrollBudgetLeft(now)) return refuse(429, 'TOO_MANY_ATTEMPTS')
   let code: unknown = null
   try { code = ((await req.json()) as { code?: unknown }).code } catch { code = null }
   if (!enrollCodeMatches(config.device.enrollCode as string, code)) {
-    noteEnrollFailure(now)
+    brakesOf(deps).noteEnrollFailure(now)
     deps.log('enroll_refused', {})
     return refuse(401, 'ENROLL_CODE_WRONG')
   }
   deps.log('device_enrolled', {})
   return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', 'Set-Cookie': issueDevice(config.device.cookieSecret, now).header } })
 }
+
+/** The client address Vercel's edge sets (x-real-ip), else the first x-forwarded-for hop. Used only as a brake key, never logged. */
+function clientOf(req: Request): string {
+  return req.headers.get('x-real-ip')?.trim() || req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+}
+
+/** One booking's day at this outlet: the key of its per-day check cap. */
+const bookingDayKey = (config: WellnessConfig, bookingId: number, now: Date): string => `${bookingId}:${localDay(now, config.outlet.timeZone)}`
 
 function parseBookingId(v: unknown): number | null {
   if (typeof v === 'number' && Number.isSafeInteger(v) && v > 0) return v
@@ -116,6 +129,11 @@ export async function handleBooking(req: Request, deps: Deps): Promise<Response>
   const email = typeof input.email === 'string' ? normalizeEmail(input.email) : ''
   if (bookingId === null || !isEmail(email)) return refuse(400, 'BOOKING_INPUT_INVALID')
 
+  const client = clientOf(req)
+  if (!brakesOf(deps).lookupBudgetLeft(client, deps.now().getTime())) {
+    deps.log('booking_lookup_braked', {})
+    return refuse(429, 'TOO_MANY_LOOKUPS')
+  }
   const read = await readBooking(config.calendesk!, bookingId, deps.fetch)
   if (!read.ok && read.reason === 'BOOKING_UNAVAILABLE') {
     deps.log('booking_unavailable', {})
@@ -135,7 +153,13 @@ export async function handleBooking(req: Request, deps: Deps): Promise<Response>
     // Numeric booking metadata only, so a refusal is self-diagnosing; never an email, a name or the booking payload.
     const b = read.ok ? read.booking : null
     deps.log('booking_refused', { reasons, locationId: b?.locationId ?? null, serviceLocationId: b?.serviceLocationId ?? null, serviceId: b?.serviceId ?? null })
+    brakesOf(deps).noteRefusedLookup(client, now.getTime())
     return refuse(409, 'BOOKING_NOT_MATCHED')
+  }
+  // Only after a full match (booking + its email), so this answer reveals nothing the guest didn't already prove.
+  if (!brakesOf(deps).bookingChecksLeft(bookingDayKey(config, bookingId, now))) {
+    deps.log('booking_already_checked', {})
+    return refuse(409, 'BOOKING_ALREADY_CHECKED')
   }
   const { token } = issueAttempt(secret, {
     bookingId, emailHash: emailHash(secret, email),
@@ -193,8 +217,12 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   const ccDecision: CcDecision = !share ? 'declined' : care ? 'agreed' : 'unavailable'
   // Stop and reconcile (T1 #164 review): once this attempt's process request has gone out, it is not sent again
   // unless same-key retry is switched on. A retry after a failed presign or upload is safe, because nothing was charged.
-  if (!config.sameKeyRetry && wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
-  if (!allowSubmission(deviceId, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
+  if (!config.sameKeyRetry && brakesOf(deps).wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
+  const dayKey = bookingDayKey(config, attempt.bookingId, now)
+  if (!brakesOf(deps).wasDispatched(attempt.attemptId) && !brakesOf(deps).bookingChecksLeft(dayKey)) return refuse(409, 'BOOKING_ALREADY_CHECKED')
+  // Open mode has no device identity, so each booking gets its own bucket: one guest never uses up another's.
+  const bucket = deviceId === 'open' ? `open:${attempt.bookingId}` : deviceId
+  if (!brakesOf(deps).allowSubmission(bucket, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
 
   const booking = read.booking
   const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, deps.now().getTime() - started <= RECORD_MAIL_DEADLINE_MS, {
@@ -204,7 +232,7 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   })
 
   const submission = await submitVideo(config.facephys!, { video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}` }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
-  if (submission.kind !== 'not_submitted') markDispatched(attempt.attemptId)
+  if (submission.kind !== 'not_submitted') brakesOf(deps).markDispatched(attempt.attemptId, dayKey)
   if (submission.kind === 'not_submitted') {
     await record('not_submitted', 'not_attempted')
     return json(502, { status: 'failed', code: submission.code, retryable: true })
@@ -252,7 +280,7 @@ export async function handleHealth(req: Request, deps: Deps): Promise<Response> 
   const enrolmentRequired = config.device !== null && config.device.enrollCode !== null
   const deviceEnrolled = config.device ? deviceIdFrom(config.device.cookieSecret, req.headers.get('cookie'), nowMs) !== null : false
   const allowedToProbe = config.device !== null && (enrolmentRequired ? deviceEnrolled : true)
-  const probe = new URL(req.url).searchParams.get('probe') === 'facephys' && allowedToProbe && config.facephys !== null && probeBudgetLeft(nowMs)
+  const probe = new URL(req.url).searchParams.get('probe') === 'facephys' && allowedToProbe && config.facephys !== null && brakesOf(deps).probeBudgetLeft(nowMs)
   const clock = () => deps.now().getTime()
   const facephysAuth = probe ? ((await authTest(config.facephys!, deps.fetch, clock)) ? 'ok' : 'failed') : 'not_probed'
   // Free preflight: which host would receive video, and is it pinned? Hostname only, never the signed URL.

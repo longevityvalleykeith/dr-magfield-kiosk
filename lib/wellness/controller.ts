@@ -61,6 +61,8 @@ export const MESSAGES: Record<string, string> = {
   ATTEMPT_INVALID: 'This check has expired. Please start again.',
   ATTEMPT_ALREADY_SUBMITTED: 'This check was already sent. Please ask the CARE team to look it up.',
   TOO_MANY_SCANS: 'Please wait a moment before the next check.',
+  TOO_MANY_LOOKUPS: 'Too many tries just now. Please wait a few minutes or ask the CARE team. Your visit continues as normal.',
+  BOOKING_ALREADY_CHECKED: 'This booking has already had its wellness check today. Your visit continues as normal.',
   FAILED: 'The wellness check couldn’t be completed and no results were sent. Your visit continues as normal.',
 }
 
