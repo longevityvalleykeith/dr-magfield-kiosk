@@ -9,6 +9,7 @@
  *   Counted when the process request first goes out for an attempt.
  * - Booking lookups: at most 60 Calendesk reads a minute, and at most 10 refused lookups per client
  *   in 10 minutes. Both are checked before Calendesk is read, so LV's shared tenant is protected.
+ * - One-time codes: at most 3 emailed per booking a day; 5 wrong entries lock a code; a code opens one attempt.
  *
  * The route handlers take a Brakes through Deps, so every test scenario starts with fresh counts.
  */
@@ -18,6 +19,8 @@ export const CHECKS_PER_BOOKING_PER_DAY = 2
 const LOOKUPS_PER_MINUTE = 60
 const REFUSED_LOOKUPS_PER_CLIENT = 10
 const REFUSED_WINDOW_MS = 10 * MINUTE
+const CODES_PER_BOOKING_PER_DAY = 3
+export const CODE_TRIES = 5
 
 export class Brakes {
   newAttempts = new Map<string, number[]>()
@@ -28,6 +31,9 @@ export class Brakes {
   bookingChecks = new Map<string, number>()
   lookups: number[] = []
   refusedLookups = new Map<string, number[]>()
+  codesSent = new Map<string, number>()
+  codeFailures = new Map<string, number>()
+  codesUsed = new Set<string>()
 
   /** An attempt whose process request was sent. Unless same-key retry is on, it is never sent again (stop and reconcile). */
   markDispatched(attemptId: string, bookingDayKey: string): void {
@@ -84,6 +90,27 @@ export class Brakes {
     if (this.refusedLookups.size > 5000) this.refusedLookups.clear()
     this.refusedLookups.set(client, [...(this.refusedLookups.get(client) ?? []).filter((t) => nowMs - t < REFUSED_WINDOW_MS), nowMs])
   }
+
+  /** Counts a code email for this booking-day; false (and not counted) once 3 went out today. */
+  takeCode(bookingDayKey: string): boolean {
+    const n = this.codesSent.get(bookingDayKey) ?? 0
+    if (n >= CODES_PER_BOOKING_PER_DAY) return false
+    if (this.codesSent.size > 5000) this.codesSent.clear()
+    this.codesSent.set(bookingDayKey, n + 1)
+    return true
+  }
+
+  codeLocked(challengeId: string): boolean { return (this.codeFailures.get(challengeId) ?? 0) >= CODE_TRIES || this.codesUsed.has(challengeId) }
+
+  /** Records a wrong code; true when that one locked the challenge. */
+  noteWrongCode(challengeId: string): boolean {
+    if (this.codeFailures.size > 5000) this.codeFailures.clear()
+    const n = (this.codeFailures.get(challengeId) ?? 0) + 1
+    this.codeFailures.set(challengeId, n)
+    return n >= CODE_TRIES
+  }
+
+  noteCodeUsed(challengeId: string): void { if (this.codesUsed.size > 5000) this.codesUsed.clear(); this.codesUsed.add(challengeId) }
 }
 
 /** The one set of counts a production instance keeps. */

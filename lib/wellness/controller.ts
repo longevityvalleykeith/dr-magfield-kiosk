@@ -7,21 +7,27 @@
  * - The camera closes as soon as the clip exists, and on cancel and reset.
  * - The clip lives in memory only, and only while a same-attempt retry may still need it.
  * - Nothing is persisted on the device.
+ *
+ * Phone-first (Keith 10-19): the guest's own phone runs the check, and a code emailed to the booking's inbox opens it.
+ * Leaving the page to read that email must not wipe the check, so hiding the page resets only while the camera is on.
  */
 import { CONSENT_VERSION } from './consent.ts'
 
 export type Screen =
-  | 'welcome' | 'booking' | 'consent' | 'camera' | 'recording' | 'processing'
+  | 'welcome' | 'booking' | 'code' | 'consent' | 'camera' | 'recording' | 'processing'
   | 'result' | 'insufficient' | 'unknown' | 'failed' | 'unsupported'
 
 export interface Indicator { key: string; label: string; value: number; unit: string }
 export interface AttemptView { token: string; email: string; maskedEmail: string; care: { name: string; email: string; maskedEmail: string } | null; scanSeconds: number }
 export interface ResultView { indicators: Indicator[]; delivery: 'sent' | 'failed'; to: string; cc: string | null; ccStatus: string }
 export interface Consent { processing: boolean; emailResults: boolean; share: boolean }
+export interface ChallengeView { token: string; email: string; maskedEmail: string }
 export interface KioskState {
   screen: Screen
   busy: boolean
   attempt: AttemptView | null
+  /** The code step: which inbox the code went to (masked), and the signed challenge to answer. */
+  challenge: ChallengeView | null
   consent: Consent
   result: ResultView | null
   errorCode: string | null
@@ -36,6 +42,7 @@ export interface ApiReply { status: number; body: Record<string, unknown> | null
 export interface ScanInput { attemptToken: string; email: string; consentVersion: string; processing: boolean; emailResults: boolean; share: boolean; video: Blob }
 export interface KioskApi {
   booking(input: { bookingId: string; email: string }): Promise<ApiReply>
+  verify(input: { challengeToken: string; email: string; code: string }): Promise<ApiReply>
   scan(input: ScanInput): Promise<ApiReply>
 }
 export interface MediaPort {
@@ -61,13 +68,17 @@ export const MESSAGES: Record<string, string> = {
   ATTEMPT_INVALID: 'This check has expired. Please start again.',
   ATTEMPT_ALREADY_SUBMITTED: 'This check was already sent. Please ask the CARE team to look it up.',
   TOO_MANY_SCANS: 'Please wait a moment before the next check.',
+  CODE_WRONG: 'That code isn’t right. Check the latest email from DR MAGfield and try again.',
+  CODE_LOCKED: 'Too many wrong codes. Please start again to get a new code.',
+  CODE_EXPIRED: 'That code has expired. Please start again to get a new code.',
+  CODE_UNAVAILABLE: 'We couldn’t send the code just now. Your visit continues as normal.',
   TOO_MANY_LOOKUPS: 'Too many tries just now. Please wait a few minutes or ask the CARE team. Your visit continues as normal.',
   BOOKING_ALREADY_CHECKED: 'This booking has already had its wellness check today. Your visit continues as normal.',
   FAILED: 'The wellness check couldn’t be completed and no results were sent. Your visit continues as normal.',
 }
 
 const noConsent = (): Consent => ({ processing: false, emailResults: false, share: false })
-export const initialState = (): KioskState => ({ screen: 'welcome', busy: false, attempt: null, consent: noConsent(), result: null, errorCode: null, message: null, retryable: false, reference: null })
+export const initialState = (): KioskState => ({ screen: 'welcome', busy: false, attempt: null, challenge: null, consent: noConsent(), result: null, errorCode: null, message: null, retryable: false, reference: null })
 
 export class KioskController {
   state: KioskState
@@ -114,16 +125,44 @@ export class KioskController {
     try { reply = await this.api.booking({ bookingId: bookingId.trim(), email: email.trim() }) } catch { reply = { status: 0, body: { code: 'BOOKING_UNAVAILABLE' } } }
     if (epoch !== this.epoch) return
     const b = reply.body ?? {}
-    if (b.status === 'matched' && typeof b.attemptToken === 'string') {
-      const care = b.care && typeof b.care === 'object' ? (b.care as { name: string; email: string; maskedEmail: string }) : null
-      this.set({
-        busy: false, screen: 'consent', consent: noConsent(),
-        attempt: { token: b.attemptToken, email: email.trim(), maskedEmail: String(b.maskedEmail ?? ''), care, scanSeconds: Number(b.scanSeconds) || this.scanSeconds },
-      })
+    if (this.matched(b, email.trim())) return
+    if (b.status === 'code_sent' && typeof b.challengeToken === 'string') {
+      this.set({ busy: false, screen: 'code', challenge: { token: b.challengeToken, email: email.trim(), maskedEmail: String(b.maskedEmail ?? '') } })
       return
     }
     const code = typeof b.code === 'string' ? b.code : 'BOOKING_UNAVAILABLE'
     this.set({ busy: false, errorCode: code, message: MESSAGES[code] ?? MESSAGES.FAILED })
+  }
+
+  /** A matched reply (from the code step, or a direct match) opens consent. */
+  matched(b: Record<string, unknown>, email: string): boolean {
+    if (b.status !== 'matched' || typeof b.attemptToken !== 'string') return false
+    const care = b.care && typeof b.care === 'object' ? (b.care as { name: string; email: string; maskedEmail: string }) : null
+    this.set({
+      busy: false, screen: 'consent', consent: noConsent(), challenge: null,
+      attempt: { token: b.attemptToken, email, maskedEmail: String(b.maskedEmail ?? ''), care, scanSeconds: Number(b.scanSeconds) || this.scanSeconds },
+    })
+    return true
+  }
+
+  /** The 6-digit code from the booking's inbox. Wrong, expired or locked codes keep the guest on this step. */
+  async submitCode(code: string): Promise<void> {
+    const ch = this.state.challenge
+    if (this.state.busy || this.state.screen !== 'code' || !ch) return
+    const epoch = this.epoch
+    this.set({ busy: true, errorCode: null, message: null })
+    let reply: ApiReply
+    try { reply = await this.api.verify({ challengeToken: ch.token, email: ch.email, code: String(code ?? '').trim() }) } catch { reply = { status: 0, body: { code: 'BOOKING_UNAVAILABLE' } } }
+    if (epoch !== this.epoch) return
+    const b = reply.body ?? {}
+    if (this.matched(b, ch.email)) return
+    const err = typeof b.code === 'string' ? b.code : 'BOOKING_UNAVAILABLE'
+    this.set({ busy: false, errorCode: err, message: MESSAGES[err] ?? MESSAGES.FAILED })
+  }
+
+  /** The page was hidden. Reading the code in the mail app keeps the check; a hidden page never keeps the camera on. */
+  onHidden(): void {
+    if (this.media.isOpen() || this.state.screen === 'camera' || this.state.screen === 'recording') this.reset()
   }
 
   setConsent(field: keyof Consent, value: boolean): void {

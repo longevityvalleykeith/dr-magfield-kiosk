@@ -28,8 +28,9 @@ The pilot gate in #164 (CLOUD-17) still stands until Keith lifts it.
 
 ## Flow
 
-1. **Enrolment.** A staff member enrols the tablet once at `/scan/enroll`. The set-up code sets an HttpOnly `__Host-dmk-device` cookie, valid for 30 days.
-2. **Booking.** The guest enters the booking number and the booking email. The server reads `GET /admin/bookings/{id}` from Calendesk and applies the entity match:
+0. **Entry: the guest's own phone** (Keith 10-19: "Make it SIMPLE & SURPRISE ME… resolve [QR path can never reach the check]", then "go"). The standee QR opens `https://dr-magfield-kiosk-krpm.vercel.app/scan?src=qr`, and `/scan` logs `qr_open` as a count. This supersedes 09-02 EV-1 and 08-29 KD-F4 **for this QR only**; LV's doorway is unchanged.
+1. **Enrolment (tablet mode only).** With `KIOSK_ENROLL_CODE` set, a staff member enrols a tablet once at `/scan/enroll` (an HttpOnly `__Host-dmk-device` cookie, valid for 30 days). **Guests' phones can't be enrolled, so phone-first needs `KIOSK_ENROLL_CODE` unset.**
+2. **Booking email, then the code.** The guest types their email; no booking number is needed. The server lists today's approved/done bookings (`GET /admin/bookings/v2`, day and status filters only, so the email is never put in a URL), keeps those at the outlet, and reads a booking in full only when its list row has no email. If one matches, a 6-digit code goes to the booking's own inbox (the address Calendesk holds). Either way the page gets the same `code_sent` reply, so it can't be used to learn who is booked. The code (`POST /api/wellness/verify`) works for 10 minutes, once; 5 wrong entries lock it; at most 3 codes per booking a day. The challenge carries only a keyed hash of the code, so LV stores nothing. On the right code, the booking is re-read and the entity match applied:
    - the booking is at location 6 (KRPM);
    - any service there (Keith 10-19: "Any service at KRPM"; location 6 offers services 8, 13 and 14), unless `KIOSK_SERVICE_IDS` restricts it;
    - the date is today in Kuala Lumpur;
@@ -91,8 +92,7 @@ Routing the consent record into Foundry's receipts is **deferred** (Keith). Unti
 
 ## Assurance and recovery: stated, not claimed
 
-- **Subject assurance is booking-detail knowledge only.** The guest typed the booking number and the booking's email. That proves **neither** that the guest controls that mailbox **nor** that the scanned face is the booking holder.
-  - *Proposal for Main and Keith, not built:* email a one-time code to the booking address before the scan.
+- **Subject assurance is inbox control (`code-to-booking-inbox`).** The code proves the guest can open the booking's inbox. It does **not** prove who they are, and nothing remote can: a phone, a passkey, an email or a booking number all prove possession, not personhood (Keith 10-19: "same phone… DOESN'T MEAN YOU ARE THE SAME PERSON"). So the design never claims identity. A reading can only reach the inbox the code was sent to, and the consent screen says the check is for the person who received the code. If a booker hands their unlocked phone or inbox to someone else, that is the booker's act.
 - **Recovery is limited.** The operation identity (attempt ID = idempotency key) lives in the kiosk's memory for 15 minutes, and in the consent record.
   - After a reset or reload, an *unknown* outcome cannot be recovered by the kiosk. No durable recovery owner is admitted, so that gate stays **held**.
   - The attempt ID in the consent record is what an operator would quote to FacePhys support.

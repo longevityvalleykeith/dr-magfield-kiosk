@@ -5,7 +5,7 @@
  * pending counsel: Keith's 10-19 product direction carries it, and no lawyer has reviewed it yet.
  * Changing a word means changing CONSENT_VERSION.
  */
-export const CONSENT_VERSION = 'dmk-cloud-v1-2026-10-19'
+export const CONSENT_VERSION = 'dmk-cloud-v2-2026-10-19'
 
 export type Lang = 'en' | 'ms'
 
@@ -25,9 +25,10 @@ export const CONSENT_TEXT: Record<Lang, ConsentCopy> = {
   en: {
     title: 'Optional wellness check',
     points: [
-      'A short video of your face is recorded on this tablet and sent to FacePhys, our technology provider, to estimate wellness indicators. FacePhys may process it outside Malaysia.',
+      'A short video of your face is recorded on this device and sent to FacePhys, our technology provider, to estimate wellness indicators. FacePhys may process it outside Malaysia.',
       'LV keeps no copy of the video, your readings or your email address. We keep only a minimal consent record: the consent version, the time, a coded booking reference and whether the email was sent.',
       'Your results are shown on this screen until it resets, and emailed to the address on your booking.',
+      'This check is for the person who received the code. The code shows you can open that inbox, not who you are, and your results go only to that inbox.',
       'These are wellness indicators, not medical measurements, and not a diagnosis.',
       'The check is optional. Saying no changes nothing about your visit. You must be 18 or older.',
     ],
@@ -42,9 +43,10 @@ export const CONSENT_TEXT: Record<Lang, ConsentCopy> = {
   ms: {
     title: 'Pemeriksaan kesejahteraan pilihan',
     points: [
-      'Video ringkas wajah anda dirakam pada tablet ini dan dihantar kepada FacePhys, penyedia teknologi kami, untuk menganggarkan penunjuk kesejahteraan. FacePhys mungkin memprosesnya di luar Malaysia.',
+      'Video ringkas wajah anda dirakam pada peranti ini dan dihantar kepada FacePhys, penyedia teknologi kami, untuk menganggarkan penunjuk kesejahteraan. FacePhys mungkin memprosesnya di luar Malaysia.',
       'LV tidak menyimpan salinan video, bacaan atau alamat e-mel anda. Kami hanya menyimpan rekod persetujuan yang minimum: versi persetujuan, masa, rujukan tempahan berkod dan sama ada e-mel telah dihantar.',
       'Keputusan anda dipaparkan pada skrin ini sehingga ia ditetapkan semula, dan dihantar melalui e-mel ke alamat pada tempahan anda.',
+      'Pemeriksaan ini untuk orang yang menerima kod tersebut. Kod itu menunjukkan anda boleh membuka peti masuk itu, bukan siapa anda, dan keputusan anda dihantar hanya ke peti masuk itu.',
       'Ini ialah penunjuk kesejahteraan, bukan ukuran perubatan, dan bukan diagnosis.',
       'Pemeriksaan ini adalah pilihan. Menolak tidak mengubah apa-apa tentang lawatan anda. Anda mesti berumur 18 tahun ke atas.',
     ],

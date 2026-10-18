@@ -3,6 +3,8 @@ import http from 'node:http'
 import { createHmac, createHash } from 'node:crypto'
 const FP = 'drive-fp-secret', CD = 'drive-cd-key', RS = 'drive-rs-key'
 const calls = []
+// The latest one-time code, readable only by the drive (the mock stands in for the guest's inbox).
+let lastCode = null
 let n = 0
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const send = (res, status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(obj === undefined ? '' : JSON.stringify(obj)) }
@@ -14,9 +16,16 @@ http.createServer((req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1:4810')
     const h = req.headers
     if (u.pathname === '/__calls') return send(res, 200, calls)
+    if (u.pathname === '/__inbox') return send(res, 200, { code: lastCode })
     if (u.pathname.startsWith('/oss/')) {
       calls.push({ kind: 'put', rawPath: req.url.split('?')[0], query: u.search, type: h['content-type'], bytes: body.length, ftyp: body.subarray(4, 8).toString('latin1'), sha: createHash('sha256').update(body).digest('hex') })
       return send(res, req.url.split('?')[0].includes('%2F') ? 403 : 200)
+    }
+    // Today's bookings (GET /admin/bookings/v2). The row leaves out the customer, so the kiosk reads 501 in full.
+    if (u.pathname === '/api/admin/bookings/v2') {
+      calls.push({ kind: 'booking_list', day: u.searchParams.get('booking_date_from'), statuses: u.searchParams.get('status_ids'), emailInUrl: u.search.includes('%40') || u.search.includes('@') })
+      if (h['x-api-key'] !== CD) return send(res, 401, { message: 'Unauthenticated.' })
+      return send(res, 200, { data: [{ id: 501, status: 'approved', paid: true, location: { location_id: 6 }, service_id: 13, employee_id: 12, start_date: today, starts_at: `${today} 10:30:00` }], current_page: 1, last_page: 1 })
     }
     if (u.pathname.startsWith('/api/admin/bookings/')) {
       calls.push({ kind: 'booking', id: u.pathname.split('/').pop(), auth: h['x-api-key'] === CD && ['drive-tenant', 'zqlc6ablyz'].includes(h['x-tenant']) })
@@ -28,6 +37,8 @@ http.createServer((req, res) => {
     if (u.pathname === '/api/admin/settings') { calls.push({ kind: 'calendesk_settings' }); return send(res, h['x-api-key'] === CD ? 200 : 401, { data: {} }) }
     if (u.pathname === '/emails') {
       const m = JSON.parse(body.toString() || '{}')
+      const code = /\b(\d{6})\b/.exec(m.text || '')
+      if ((h['idempotency-key'] || '').startsWith('code-') && code) lastCode = code[1]
       calls.push({ kind: 'email', auth: h.authorization === `Bearer ${RS}`, idem: h['idempotency-key'], to: m.to, cc: m.cc, subject: m.subject, disclaimer: (m.text || '').includes('wellness indicator, not a medical measurement'), leaks: ['spo2', 'SpO2', 'stress', 'emotion'].filter((w) => (m.text || '').includes(w)) })
       return send(res, 200, { id: `em_${calls.length}` })
     }
