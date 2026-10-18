@@ -59,7 +59,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And exactly 1 email was sent to "guest@example.com" with CC "aisyah@example.com"
     And the email says "wellness indicator, not a medical measurement"
     And the kiosk shows the "result" screen with heart rate 72 bpm and the email as sent
-    And the consent record holds only the consent version, the time, a coded booking reference, the share flag and outcome codes
+    And the consent record holds only the admitted fields, with Calendesk location 6, CARE employee 12, the CC agreed and no email address or reading
 
   Scenario: K-06 Sharing starts unticked, so without the guest's tick there is no CC (O2O-05)
     Given the guest confirmed booking 501 with "guest@example.com"
@@ -67,15 +67,28 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
+    And the consent record keeps CARE employee 12 with the CC "declined"
 
-  Scenario: K-07 An inactive CARE employee is never CC'd and never replaced (O2O-04)
+  Scenario: K-07 An inactive CARE employee is never CC'd, never replaced, and never blocks the guest's check (O2O-04)
     Given the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as inactive at "krpm"
     And the CARE roster lists employee 13 "Ben" with "ben@example.com" as active at "krpm"
+    And FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest confirms booking 501 with "guest@example.com"
     Then no CARE recipient is offered
     When the guest forces a CC on the scan request
-    Then the scan is refused with "RECIPIENT_UNAVAILABLE"
-    And no request reached FacePhys or the mail provider
+    Then exactly 1 email was sent to "guest@example.com" with no CC
+    And the scan reply reports the CC as "unavailable"
+
+  Scenario: K-17 A CARE employee who leaves the roster after the match is dropped from the CC, and the check still runs (O2O-04, O2O-05)
+    Given the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And the guest ticked CC to "Aisyah"
+    And the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as inactive at "krpm"
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    When the guest starts the scan
+    Then exactly 1 email was sent to "guest@example.com" with no CC
+    And the scan reply reports the CC as "unavailable"
+    And the kiosk shows the "result" screen
 
   Scenario: K-08 A double tap never creates a second charge (O2O-06)
     Given the guest confirmed booking 501 with "guest@example.com"

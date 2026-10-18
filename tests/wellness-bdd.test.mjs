@@ -207,7 +207,7 @@ R.Given(/^today in Kuala Lumpur is "(\d{4}-\d{2}-\d{2})"$/, (w, day) => { w.now 
 R.Given(/^Calendesk has booking (\d+) at location (\d+) for service (\d+) on "([^"]+)" with status "([^"]+)" for "([^"]+)" and employee (\d+)$/,
   (w, id, loc, svc, date, status, email, emp) => {
     w.bookings.set(Number(id), {
-      id: Number(id), status, paid: true, location: { location_id: Number(loc) }, service_id: Number(svc), employee_id: Number(emp), user_id: 77,
+      id: Number(id), status, paid: true, location: { id: 9000 + Number(loc), location_id: Number(loc) }, service_id: Number(svc), employee_id: Number(emp), user_id: 77,
       start_date: date, start_time: '10:30', starts_at: `${date} 10:30:00`, user: { id: 77, email, name: 'Test', surname: 'Guest' }, employee: { id: Number(emp) },
     })
   })
@@ -341,18 +341,38 @@ R.Then(/^the kiosk shows the "result" screen with heart rate (\d+) bpm and the e
   assert.equal(s.result.delivery, 'sent')
   assert.deepEqual(s.result.indicators.map((i) => i.key).sort(), ['breathing_rate', 'heart_rate', 'hrv_rmssd', 'hrv_sdnn'])
 })
-R.Then(/^the consent record holds only the consent version, the time, a coded booking reference, the share flag and outcome codes$/, (w) => {
+// T1 #164 CALENDESK-CONSENT-FIELDS (Keith: location and CARE employee ID) plus Keith's chosen sent/failed codes.
+const CONSENT_FIELDS = ['attemptId', 'bookingId', 'calendeskAccountRef', 'careCcDecision', 'careEmployeeId', 'careRecipientRef', 'consentRecordId', 'delivery',
+  'deleteAfter', 'event', 'guestRecipientRef', 'locationId', 'noticeVersion', 'outcome', 'processingDecision', 'purpose', 'recordedAt', 'retentionPolicyVersion',
+  'schemaVersion', 'serviceId', 'serviceLocationId', 'serviceTypeId', 'sourceSurface', 'subjectBinding', 'tenantId', 'verificationCheckedAt', 'verificationPolicyVersion']
+R.Then(/^the consent record holds only the admitted fields, with Calendesk location (\d+), CARE employee (\d+), the CC agreed and no email address or reading$/, (w, loc, emp) => {
   const records = w.records()
   assert.equal(records.length, 1)
   const r = records[0]
-  assert.deepEqual(Object.keys(r).sort(), ['acceptedAt', 'attemptId', 'bookingRef', 'consentVersion', 'delivery', 'event', 'outcome', 'outlet', 'shared', 'v'])
-  assert.equal(r.consentVersion, CONSENT_VERSION)
-  assert.match(r.bookingRef, /^[0-9a-f]{64}$/)
-  assert.equal(r.shared, true)
+  assert.deepEqual(Object.keys(r).sort(), [...CONSENT_FIELDS].sort())
+  assert.equal(r.schemaVersion, 'dmk-consent-v2')
+  assert.equal(r.noticeVersion, CONSENT_VERSION)
+  assert.equal(r.bookingId, 501)
+  assert.equal(r.locationId, +loc)
+  assert.equal(r.serviceLocationId, 9006, 'serviceLocationId comes from location.id, never from locationId')
+  assert.equal(r.careEmployeeId, +emp)
+  assert.equal(r.careCcDecision, 'agreed')
+  assert.equal(r.subjectBinding, 'booking-detail-knowledge-v1')
+  assert.match(r.guestRecipientRef, /^[0-9a-f]{64}$/)
+  assert.match(r.careRecipientRef, /^[0-9a-f]{64}$/)
+  assert.equal(r.retentionPolicyVersion, 'unset')
+  assert.equal(r.deleteAfter, null)
   assert.equal(r.outcome, 'completed')
   assert.equal(r.delivery, 'sent')
   assert.ok(!JSON.stringify(r).includes('@'), 'an email address entered the record')
 })
+R.Then(/^the consent record keeps CARE employee (\d+) with the CC "([a-z]+)"$/, (w, emp, decision) => {
+  const [r] = w.records()
+  assert.equal(r.careEmployeeId, +emp)
+  assert.equal(r.careCcDecision, decision)
+  assert.equal(r.careRecipientRef, null)
+})
+R.Then(/^the scan reply reports the CC as "([a-z]+)"$/, (w, status) => { assert.equal(w.lastReply.body.ccStatus, status) })
 R.Then(/^no CARE recipient is offered$/, (w) => { assert.equal(w.controller.state.attempt.care, null) })
 R.Then(/^the scan is refused with "([A-Z_]+)"$/, (w, code) => { assert.equal(w.lastReply.body.code, code) })
 R.Then(/^every process request carried the same idempotency key and the same video SHA-256$/, (w) => {
