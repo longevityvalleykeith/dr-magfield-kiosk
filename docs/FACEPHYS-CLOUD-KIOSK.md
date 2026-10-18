@@ -174,6 +174,10 @@ There are also two transitive high advisories (`postcss` via next; `nanoid` and 
 - **Resend's honouring of `Idempotency-Key` is unmeasured.** If it is ignored, a replayed attempt could send a duplicate email.
 - **The device matrix is unmeasured.** Chrome 155 on macOS records mp4. Every tablet must pass `MediaRecorder.isTypeSupported('video/mp4')`; otherwise the kiosk says so and the visit continues.
 - **The brakes are per serverless instance.** The hard spend cap is the FacePhys balance (a 403 is shown honestly).
+  - **Per booking:** at most 2 charged checks a day (one retry after a poor reading). A third is refused with `BOOKING_ALREADY_CHECKED`, both at the match and at the point of charge (K-29, K-30).
+  - **Open mode:** each booking has its own new-attempt bucket, so one guest never uses up another's (K-31).
+  - **Booking lookups:** checked before Calendesk is read. At most 10 refused lookups per client (`x-real-ip`) in 10 minutes, and 60 reads a minute per instance; otherwise `TOO_MANY_LOOKUPS` (K-32, K-33). The client address is a brake key only and is never logged.
+  - **Not durable:** a new or second instance starts at zero. A cap that holds across instances needs a store, which LV doesn't have here by design.
 
 ## Verify
 
