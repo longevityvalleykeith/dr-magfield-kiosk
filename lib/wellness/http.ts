@@ -21,7 +21,8 @@ import { composeResultEmail, sendEmail } from './email.ts'
 import { consentRecord } from './record.ts'
 import type { CcDecision, Delivery, Outcome, RecordInput } from './record.ts'
 import { careEmailHash, deviceIdFrom, emailHash, enrollCodeMatches, issueAttempt, issueDevice, readAttempt } from './tokens.ts'
-import { allowSubmission, enrollBudgetLeft, markDispatched, noteEnrollFailure, probeBudgetLeft, wasDispatched } from './limits.ts'
+import { liveBrakes } from './limits.ts'
+import type { Brakes } from './limits.ts'
 import { sha256Hex } from './crypto.ts'
 import { CONSENT_VERSION } from './consent.ts'
 
@@ -35,7 +36,11 @@ export interface Deps {
   fetch: typeof fetch
   now: () => Date
   log: (event: string, fields: Record<string, unknown>) => void
+  /** The in-process brakes. Production shares one set per instance; each test scenario brings its own. */
+  brakes?: Brakes
 }
+
+const brakesOf = (deps: Deps): Brakes => deps.brakes ?? liveBrakes
 
 const MIN_VIDEO = 1024
 const MAX_VIDEO = 4_200_000 // under the 4.5 MB serverless request limit
@@ -88,11 +93,11 @@ export async function handleEnroll(req: Request, deps: Deps): Promise<Response> 
   if (!config.device) return refuse(503, 'CHECK_DISABLED')
   if (config.device.enrollCode === null) return json(200, { status: 'enrolment_not_required' })
   const now = deps.now().getTime()
-  if (!enrollBudgetLeft(now)) return refuse(429, 'TOO_MANY_ATTEMPTS')
+  if (!brakesOf(deps).enrollBudgetLeft(now)) return refuse(429, 'TOO_MANY_ATTEMPTS')
   let code: unknown = null
   try { code = ((await req.json()) as { code?: unknown }).code } catch { code = null }
   if (!enrollCodeMatches(config.device.enrollCode as string, code)) {
-    noteEnrollFailure(now)
+    brakesOf(deps).noteEnrollFailure(now)
     deps.log('enroll_refused', {})
     return refuse(401, 'ENROLL_CODE_WRONG')
   }
@@ -193,8 +198,8 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   const ccDecision: CcDecision = !share ? 'declined' : care ? 'agreed' : 'unavailable'
   // Stop and reconcile (T1 #164 review): once this attempt's process request has gone out, it is not sent again
   // unless same-key retry is switched on. A retry after a failed presign or upload is safe, because nothing was charged.
-  if (!config.sameKeyRetry && wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
-  if (!allowSubmission(deviceId, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
+  if (!config.sameKeyRetry && brakesOf(deps).wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
+  if (!brakesOf(deps).allowSubmission(deviceId, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
 
   const booking = read.booking
   const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, deps.now().getTime() - started <= RECORD_MAIL_DEADLINE_MS, {
@@ -204,7 +209,7 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   })
 
   const submission = await submitVideo(config.facephys!, { video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}` }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
-  if (submission.kind !== 'not_submitted') markDispatched(attempt.attemptId)
+  if (submission.kind !== 'not_submitted') brakesOf(deps).markDispatched(attempt.attemptId)
   if (submission.kind === 'not_submitted') {
     await record('not_submitted', 'not_attempted')
     return json(502, { status: 'failed', code: submission.code, retryable: true })
@@ -252,7 +257,7 @@ export async function handleHealth(req: Request, deps: Deps): Promise<Response> 
   const enrolmentRequired = config.device !== null && config.device.enrollCode !== null
   const deviceEnrolled = config.device ? deviceIdFrom(config.device.cookieSecret, req.headers.get('cookie'), nowMs) !== null : false
   const allowedToProbe = config.device !== null && (enrolmentRequired ? deviceEnrolled : true)
-  const probe = new URL(req.url).searchParams.get('probe') === 'facephys' && allowedToProbe && config.facephys !== null && probeBudgetLeft(nowMs)
+  const probe = new URL(req.url).searchParams.get('probe') === 'facephys' && allowedToProbe && config.facephys !== null && brakesOf(deps).probeBudgetLeft(nowMs)
   const clock = () => deps.now().getTime()
   const facephysAuth = probe ? ((await authTest(config.facephys!, deps.fetch, clock)) ? 'ok' : 'failed') : 'not_probed'
   // Free preflight: which host would receive video, and is it pinned? Hostname only, never the signed URL.

@@ -14,6 +14,7 @@ import { createRegistry, runFeature } from './bdd/gherkin.mjs'
 import { handleEnroll, handleBooking, handleScan, handleHealth } from '../lib/wellness/http.ts'
 import { KioskController, MESSAGES } from '../lib/wellness/controller.ts'
 import { CONSENT_VERSION } from '../lib/wellness/consent.ts'
+import { Brakes } from '../lib/wellness/limits.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SECRETS = { facephys: 'fp-secret-NEVER-LEAK-7f3a', calendesk: 'cd-key-NEVER-LEAK-91bc', mail: 'rs-key-NEVER-LEAK-2d4e' }
@@ -67,6 +68,7 @@ class World {
     this.employees = new Map()
     this.presignHost = HOSTS.oss
     this.media = new FakeMedia()
+    this.brakes = new Brakes()
     this.controller = new KioskController({ api: this.api(), media: this.media, scanSeconds: 20 })
   }
 
@@ -76,6 +78,7 @@ class World {
       fetch: (url, init) => this.fetch(url, init),
       now: () => this.now,
       log: (event, fields) => { this.logs.push(JSON.stringify({ event, ...fields })) },
+      brakes: this.brakes,
     }
   }
 

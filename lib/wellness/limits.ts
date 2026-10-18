@@ -5,43 +5,51 @@
  * - New attempts: at most 30 per device per hour.
  * - Resubmissions of one attempt (same key, so replays rather than new charges): at most 4.
  * - Wrong enrolment codes: at most 10 per minute per instance.
+ *
+ * The route handlers take a Brakes through Deps, so every test scenario starts with fresh counts.
  */
 const HOUR = 3_600_000
-const newAttempts = new Map<string, number[]>()
-const submissions = new Map<string, number>()
-let enrollFailures: number[] = []
-const dispatched = new Set<string>()
 
-/** An attempt whose process request was sent. Unless same-key retry is on, it is never sent again (stop and reconcile). */
-export function markDispatched(attemptId: string): void { if (dispatched.size > 5000) dispatched.clear(); dispatched.add(attemptId) }
-export function wasDispatched(attemptId: string): boolean { return dispatched.has(attemptId) }
+export class Brakes {
+  newAttempts = new Map<string, number[]>()
+  submissions = new Map<string, number>()
+  enrollFailures: number[] = []
+  dispatched = new Set<string>()
+  probes: number[] = []
 
-export function allowSubmission(deviceId: string, attemptId: string, nowMs: number): boolean {
-  const n = submissions.get(attemptId) ?? 0
-  if (n >= 4) return false
-  if (n === 0) {
-    const recent = (newAttempts.get(deviceId) ?? []).filter((t) => nowMs - t < HOUR)
-    if (recent.length >= 30) return false
-    recent.push(nowMs)
-    newAttempts.set(deviceId, recent)
+  /** An attempt whose process request was sent. Unless same-key retry is on, it is never sent again (stop and reconcile). */
+  markDispatched(attemptId: string): void { if (this.dispatched.size > 5000) this.dispatched.clear(); this.dispatched.add(attemptId) }
+  wasDispatched(attemptId: string): boolean { return this.dispatched.has(attemptId) }
+
+  allowSubmission(deviceId: string, attemptId: string, nowMs: number): boolean {
+    const n = this.submissions.get(attemptId) ?? 0
+    if (n >= 4) return false
+    if (n === 0) {
+      const recent = (this.newAttempts.get(deviceId) ?? []).filter((t) => nowMs - t < HOUR)
+      if (recent.length >= 30) return false
+      recent.push(nowMs)
+      this.newAttempts.set(deviceId, recent)
+    }
+    if (this.submissions.size > 5000) this.submissions.clear()
+    this.submissions.set(attemptId, n + 1)
+    return true
   }
-  if (submissions.size > 5000) submissions.clear()
-  submissions.set(attemptId, n + 1)
-  return true
+
+  enrollBudgetLeft(nowMs: number): boolean {
+    this.enrollFailures = this.enrollFailures.filter((t) => nowMs - t < 60_000)
+    return this.enrollFailures.length < 10
+  }
+
+  noteEnrollFailure(nowMs: number): void { this.enrollFailures.push(nowMs) }
+
+  /** The free preflight is public in open mode: at most 10 per minute per instance. */
+  probeBudgetLeft(nowMs: number): boolean {
+    this.probes = this.probes.filter((t) => nowMs - t < 60_000)
+    if (this.probes.length >= 10) return false
+    this.probes.push(nowMs)
+    return true
+  }
 }
 
-export function enrollBudgetLeft(nowMs: number): boolean {
-  enrollFailures = enrollFailures.filter((t) => nowMs - t < 60_000)
-  return enrollFailures.length < 10
-}
-
-export function noteEnrollFailure(nowMs: number): void { enrollFailures.push(nowMs) }
-
-let probes: number[] = []
-/** The free preflight is public in open mode: at most 10 per minute per instance. */
-export function probeBudgetLeft(nowMs: number): boolean {
-  probes = probes.filter((t) => nowMs - t < 60_000)
-  if (probes.length >= 10) return false
-  probes.push(nowMs)
-  return true
-}
+/** The one set of counts a production instance keeps. */
+export const liveBrakes = new Brakes()
