@@ -319,7 +319,10 @@ R.When(/^the guest forces a CC on the scan request$/, async (w) => {
 R.Then(/^the camera was never opened$/, (w) => { assert.equal(w.media.openCount, 0) })
 R.Then(/^the camera is closed$/, (w) => { assert.equal(w.media.isOpen(), false) })
 R.Then(/^no request reached FacePhys, Calendesk or the mail provider$/, (w) => { assert.deepEqual(w.callsTo(HOSTS.facephys, HOSTS.oss, HOSTS.calendesk, HOSTS.mail), []) })
-R.Then(/^no request reached FacePhys or the mail provider$/, (w) => { assert.deepEqual(w.callsTo(HOSTS.facephys, HOSTS.oss, HOSTS.mail), []) })
+// The one-time code email is the gate itself (phone-first, 10-19), so it is not a result or record email.
+R.Then(/^no request reached FacePhys or the mail provider$/, (w) => {
+  assert.deepEqual(w.callsTo(HOSTS.facephys, HOSTS.oss, HOSTS.mail).filter((c) => !String(c.headers['idempotency-key'] || '').startsWith('code-')), [])
+})
 R.Then(/^the kiosk shows the "([a-z_]+)" screen$/, (w, screen) => { assert.equal(w.controller.state.screen, screen) })
 R.Then(/^the kiosk is refused with "([A-Z_]+)"$/, (w, code) => {
   assert.equal(w.lastReply?.body?.code, code)
@@ -403,7 +406,7 @@ R.Then(/^the consent record holds only the admitted fields, with Calendesk locat
   assert.equal(r.serviceLocationId, 9006, 'serviceLocationId comes from location.id, never from locationId')
   assert.equal(r.careEmployeeId, +emp)
   assert.equal(r.careCcDecision, 'agreed')
-  assert.equal(r.subjectBinding, 'booking-detail-knowledge-v1')
+  assert.equal(r.subjectBinding, 'booking-inbox-code-v1', 'the code proves the inbox, not the person')
   assert.match(r.guestRecipientRef, /^[0-9a-f]{64}$/)
   assert.match(r.careRecipientRef, /^[0-9a-f]{64}$/)
   assert.equal(r.retentionPolicyVersion, 'unset')
@@ -641,6 +644,14 @@ R.Then(/^the reply has the same shape as the reply for "([^"]+)"$/, async (w, ot
   const theirs = shape(await w.api().booking({ bookingId: '', email: other }))
   assert.deepEqual(mine, theirs)
 })
+R.Then(/^booking (\d+) at another outlet was never read in full$/, (w, id) => {
+  assert.equal(w.callsTo(HOSTS.calendesk).filter((c) => c.path === `/api/admin/bookings/${id}`).length, 0)
+})
+R.When(/^the same code is entered again$/, async (w) => {
+  const sent = [...w.responses].reverse().find((r) => r.body?.status === 'code_sent')
+  await w.api().verify({ challengeToken: sent.body.challengeToken, email: 'guest@example.com', code: w.lastCode() })
+})
+R.Then(/^the reply is refused with "([A-Z_]+)"$/, (w, code) => { assert.equal(w.lastReply.body.code, code) })
 R.Given(/^Calendesk lists bookings without customer emails$/, (w) => { w.listOmitsEmail = true })
 R.When(/^the phone hides the page$/, (w) => { w.controller.onHidden() })
 R.Then(/^the consent text says the check is for the person who received the code$/, (w) => {

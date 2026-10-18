@@ -320,6 +320,8 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And a 6-digit code was emailed to "guest@example.com" and to no one else
     When the guest enters the emailed code
     Then the kiosk shows the "consent" screen
+    When the same code is entered again
+    Then the reply is refused with "CODE_LOCKED"
 
   Scenario: K-35 Knowing the email is not enough: wrong codes never open consent, and the fifth locks the code
     When the guest asks for a code with "guest@example.com"
@@ -348,8 +350,10 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
 
   Scenario: K-39 When Calendesk's booking list leaves out customer emails, the kiosk reads each KRPM booking to match
     Given Calendesk lists bookings without customer emails
+    And Calendesk has booking 512 at location 7 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
     When the guest asks for a code with "guest@example.com"
     Then a 6-digit code was emailed to "guest@example.com" and to no one else
+    And booking 512 at another outlet was never read in full
 
   Scenario: K-40 Matching by email counts only today's active KRPM bookings
     Given Calendesk has booking 510 at location 7 for service 13 on "2026-10-20" with status "approved" for "other@example.com" and employee 12
