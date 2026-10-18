@@ -127,7 +127,7 @@ test('the check is off unless switched on AND fully configured', () => {
   const c = readConfig({})
   assert.equal(c.facephys, null)
   assert.equal(c.outlet.locationId, 6)
-  assert.deepEqual(c.outlet.serviceIds, [13, 14])
+  assert.deepEqual(c.outlet.serviceIds, [], 'any service at KRPM by default (Keith 10-19)')
   assert.equal(c.scanSeconds, 20)
 })
 

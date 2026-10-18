@@ -65,7 +65,8 @@ export function readConfig(env: Env): WellnessConfig {
   const pins = text(env.FACEPHYS_UPLOAD_HOSTS).split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
   const own = baseDomain(baseUrl)
   const roster = parseRoster(env.CARE_ROSTER_JSON)
-  const serviceIds = text(env.KIOSK_SERVICE_IDS || '13,14').split(',')
+  // Empty = any service at the outlet (Keith 10-19: "Any service at KRPM"). KIOSK_SERVICE_IDS restricts it.
+  const serviceIds = text(env.KIOSK_SERVICE_IDS).split(',')
     .map((s) => Number.parseInt(s.trim(), 10)).filter((n) => Number.isSafeInteger(n) && n > 0)
   const quality = Number.parseFloat(text(env.MIN_SIGNAL_QUALITY))
   return {
@@ -84,7 +85,7 @@ export function readConfig(env: Env): WellnessConfig {
       slug: text(env.KIOSK_OUTLET) || 'krpm',
       name: text(env.KIOSK_OUTLET_NAME) || 'DR MAGfield KRPM',
       locationId: int(env.KIOSK_LOCATION_ID, 6),
-      serviceIds: serviceIds.length ? serviceIds : [13, 14],
+      serviceIds,
       timeZone: text(env.KIOSK_TIME_ZONE) || 'Asia/Kuala_Lumpur',
     },
     roster,
