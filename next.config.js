@@ -11,6 +11,9 @@ const PRIVATE = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // No page uses next/image. Turning the optimizer off closes /_next/image, which on 14.2.x carries
+  // GHSA-2xp9-vwfh-vxw4 (critical RCE via sharp/libheif when AVIF is optimized; fixed only in next ≥ 15.5.24).
+  images: { unoptimized: true },
   async headers() {
     return [
       { source: '/scan', headers: [...PRIVATE, { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' }] },

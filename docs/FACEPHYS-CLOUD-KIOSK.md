@@ -141,6 +141,21 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | O2O-08 events | No event stream in this mode. The client drops stale and late replies. | K-11 |
 | O2O-09 delivery ≠ acceptance | The screen only says "Emailed to …" | K-13 |
 
+## Security posture of the framework (measured 2026-10-18, `npm audit --omit=dev`)
+
+`next` 14.2.35 is the newest 14.x, but it still carries advisories that are fixed only on the 15.5/16.x lines:
+
+| Advisory | Severity | Status for this app |
+|---|---|---|
+| GHSA-2xp9-vwfh-vxw4: RCE via sharp/libheif when AVIF is optimized (`/_next/image`) | Critical | **Mitigated.** `images.unoptimized: true`, and no page uses `next/image`. Probed locally: `/_next/image` returned 200 before and 404 after. |
+| GHSA-p293-qw3h-jr36: RCE on Windows-hosted servers | Critical | Not applicable on Vercel's Linux runtime |
+| SSRF via rewrites, Pages-Router i18n middleware bypass, WebSocket SSRF, Server Actions SSRF on custom servers | High | This app has no rewrites, middleware, WebSockets, Server Actions or custom server |
+| Denial of service in RSC request handling and App Router | High | Applies in principle. A tablet-only kiosk limits exposure; it is not a fix. |
+
+There are also two transitive high advisories (`postcss` via next; `nanoid` and `source-map-js` at build time).
+
+**Recommendation:** before guests, upgrade to `next` ≥ 15.5.24 (15.5.28 is the latest backport) with React 19. Do it as its own unit, because it changes the existing standee app's request APIs and caching defaults.
+
 ## Known unknowns
 
 - **The v3 result schema is unspecified.** The field map is calibrated from the vendor's public Playground. `vendor_result_shape` logs key paths, never values, so the map can be checked against the first real result.
