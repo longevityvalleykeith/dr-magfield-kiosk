@@ -17,7 +17,7 @@ import { CONSENT_VERSION } from '../lib/wellness/consent.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SECRETS = { facephys: 'fp-secret-NEVER-LEAK-7f3a', calendesk: 'cd-key-NEVER-LEAK-91bc', mail: 'rs-key-NEVER-LEAK-2d4e' }
-const HOSTS = { facephys: 'facephys.test', oss: 'oss.facephys-oss.test', calendesk: 'calendesk.test', mail: 'mail.test' }
+const HOSTS = { facephys: 'facephys.test', oss: 'facephys-kiosk.oss-ap-southeast-1.aliyuncs.com', calendesk: 'calendesk.test', mail: 'mail.test' }
 
 // A minimal ISO-BMFF file start (size, "ftyp", brand "isom"), then deterministic filler.
 const FAKE_MP4 = (() => {
@@ -64,13 +64,15 @@ class World {
     this.cookie = null
     this.now = new Date('2026-10-20T02:00:00Z')
     this.objects = 0
+    this.employees = new Map()
+    this.presignHost = HOSTS.oss
     this.media = new FakeMedia()
     this.controller = new KioskController({ api: this.api(), media: this.media, scanSeconds: 20 })
   }
 
   deps() {
     return {
-      env: { ...this.env, CARE_ROSTER_JSON: JSON.stringify(this.roster) },
+      env: { ...this.env, ...(this.roster === null ? {} : { CARE_ROSTER_JSON: JSON.stringify(this.roster) }) },
       fetch: (url, init) => this.fetch(url, init),
       now: () => this.now,
       log: (event, fields) => { this.logs.push(JSON.stringify({ event, ...fields })) },
@@ -127,7 +129,7 @@ class World {
       if (u.pathname === '/api/agent/auth/test' && method === 'GET') return json(200, { ok: true, keyId: 'kid-test', apiVersion: 3, checkedAt: this.now.toISOString(), secretShown: false })
       if (u.pathname === '/api/v2/video/upload/presign' && method === 'POST') {
         this.objects++
-        return json(200, { uploadUrl: `https://${HOSTS.oss}/kiosk%2Fobj-${this.objects}.mp4?Signature=ab%2Fcd&Expires=1`, objectKey: `kiosk/obj-${this.objects}.mp4` })
+        return json(200, { uploadUrl: `https://${this.presignHost}/kiosk%2Fobj-${this.objects}.mp4?Signature=ab%2Fcd&Expires=1`, objectKey: `kiosk/obj-${this.objects}.mp4` })
       }
       if (u.pathname === '/api/v3/video/process' && method === 'POST') {
         const next = this.process[Math.min(this.processIndex, this.process.length - 1)]
@@ -142,13 +144,18 @@ class World {
       return json(404, { error: 'not found' })
     }
     // The vendor SDK's note: OSS refuses a path whose "/" arrived encoded as %2F.
-    if (u.host === HOSTS.oss) return new Response(null, { status: u.pathname.includes('%2F') ? 403 : 200 })
+    if (u.host === HOSTS.oss || u.host === this.presignHost) return new Response(null, { status: u.pathname.includes('%2F') ? 403 : 200 })
     if (u.host === HOSTS.calendesk) {
       if (headers['x-api-key'] !== SECRETS.calendesk || headers['x-tenant'] !== 'tenant-test') return json(401, { message: 'Unauthenticated.' })
       const m = /^\/api\/admin\/bookings\/(\d+)$/.exec(u.pathname)
       if (m && method === 'GET') {
         const b = this.bookings.get(Number(m[1]))
         return b ? json(200, { data: b }) : json(404, { message: 'Not found' })
+      }
+      const e = /^\/api\/admin\/employees\/(\d+)$/.exec(u.pathname)
+      if (e && method === 'GET') {
+        const emp = this.employees.get(Number(e[1]))
+        return emp ? json(200, { data: emp }) : json(404, { message: 'Not found' })
       }
       return json(404, {})
     }
@@ -445,11 +452,12 @@ R.When(/^staff run the free FacePhys preflight on this tablet$/, async (w) => {
   const req = new Request('https://kiosk.test/api/wellness/health?probe=facephys', { headers: w.headers() })
   await w.capture(await handleHealth(req, w.deps()))
 })
-R.Then(/^the preflight names the upload host "([^"]+)" as not pinned$/, (w, host) => {
+R.Then(/^the preflight names the upload host "([^"]+)" as allowed by the "(dynamic|pinned)" rule$/, (w, host, rule) => {
   const b = w.lastReply.body
   assert.equal(b.facephysAuth, 'ok')
   assert.equal(b.uploadHost, host)
-  assert.equal(b.uploadHostPinned, false)
+  assert.equal(b.uploadHostAllowed, true)
+  assert.equal(b.uploadPolicy, rule)
   assert.ok(!w.lastReply.text.includes('Signature'), 'the signed upload URL must never be returned')
 })
 R.Then(/^no video was uploaded and no process request was sent$/, (w) => {
@@ -483,5 +491,15 @@ R.Then(/^the kiosk offers no retry and shows the reference of the consent record
   const [rec] = w.records()
   assert.ok(rec.attemptId.startsWith(s.reference), 'the reference must locate the consent record')
 })
+
+// ── production simplicity (Keith 10-19) ──────────────────────────────
+R.Given(/^production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured$/, (w) => {
+  for (const k of ['KIOSK_ENROLL_CODE', 'KIOSK_COOKIE_SECRET', 'FACEPHYS_UPLOAD_HOSTS']) delete w.env[k]
+  w.roster = null
+})
+R.Given(/^Calendesk names employee (\d+) as "([^"]+)" with "([^"]+)"$/, (w, id, name, email) => {
+  w.employees.set(Number(id), { id: Number(id), user: { id: 900 + Number(id), name, surname: 'CARE', email, status: 'active' }, services: [{ id: 13 }] })
+})
+R.Given(/^FacePhys presigns uploads to "([^"]+)"$/, (w, host) => { w.presignHost = host })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())

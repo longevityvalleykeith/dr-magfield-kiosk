@@ -180,13 +180,13 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     Then the kiosk shows the "insufficient" screen with no values
     And no email was sent
 
-  Scenario: K-19 Until the upload host is pinned the check stays off, and a free preflight names the host (CLOUD-04)
+  Scenario: K-19 With no static pin, the free preflight names the upload host and the dynamic rule that admits it (CLOUD-04)
     Given no upload host is pinned
-    When the guest confirms booking 501 with "guest@example.com"
-    Then the kiosk is refused with "CHECK_DISABLED"
     When staff run the free FacePhys preflight on this tablet
-    Then the preflight names the upload host "oss.facephys-oss.test" as not pinned
+    Then the preflight names the upload host "facephys-kiosk.oss-ap-southeast-1.aliyuncs.com" as allowed by the "dynamic" rule
     And no video was uploaded and no process request was sent
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk shows the "consent" screen
 
   Scenario: K-20 Consent records can also go to an LV mailbox, carrying no address or reading
     Given consent records are also mailed to "records@lv.test"
@@ -228,3 +228,25 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the same attempt is resent at the network level
     Then the scan is refused with "ATTEMPT_ALREADY_SUBMITTED"
     And FacePhys received exactly 1 presign, 1 upload and 1 process request
+
+  Scenario: K-24 Production simplicity: no enrolment, roster, cookie secret or host pin, and the CC comes from Calendesk
+    Given production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured
+    And Calendesk names employee 12 as "Aisyah" with "aisyah@example.com"
+    And this kiosk tablet is not enrolled
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the consent screen shows the exact To address "guest@example.com" and CC address "aisyah@example.com"
+    Given the guest agreed to processing and email delivery
+    And the guest ticked CC to "Aisyah"
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    When the guest starts the scan
+    Then exactly 1 email was sent to "guest@example.com" with CC "aisyah@example.com"
+    And every outbound request refused redirects
+
+  Scenario: K-25 The dynamic rule refuses an upload host outside FacePhys and the known storage providers (CLOUD-04)
+    Given no upload host is pinned
+    And FacePhys presigns uploads to "uploads.evil.example"
+    And the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    When the guest starts the scan
+    Then the kiosk shows the "failed" screen
+    And no video was uploaded and no process request was sent
