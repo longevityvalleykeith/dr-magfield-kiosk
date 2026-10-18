@@ -31,7 +31,7 @@ The pilot gate in #164 (CLOUD-17) still stands until Keith lifts it.
 1. **Enrolment.** A staff member enrols the tablet once at `/scan/enroll`. The set-up code sets an HttpOnly `__Host-dmk-device` cookie, valid for 30 days.
 2. **Booking.** The guest enters the booking number and the booking email. The server reads `GET /admin/bookings/{id}` from Calendesk and applies the entity match:
    - the booking is at location 6 (KRPM);
-   - the service is 13 or 14;
+   - any service there (Keith 10-19: "Any service at KRPM"; location 6 offers services 8, 13 and 14), unless `KIOSK_SERVICE_IDS` restricts it;
    - the date is today in Kuala Lumpur;
    - the status is approved or done;
    - the typed email is the booking's email.

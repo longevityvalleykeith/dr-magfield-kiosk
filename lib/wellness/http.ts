@@ -132,7 +132,9 @@ export async function handleBooking(req: Request, deps: Deps): Promise<Response>
   }
   // Not found and mismatched get the same answer, so the kiosk cannot be used to probe bookings.
   if (reasons.length > 0) {
-    deps.log('booking_refused', { reasons })
+    // Numeric booking metadata only, so a refusal is self-diagnosing; never an email, a name or the booking payload.
+    const b = read.ok ? read.booking : null
+    deps.log('booking_refused', { reasons, locationId: b?.locationId ?? null, serviceLocationId: b?.serviceLocationId ?? null, serviceId: b?.serviceId ?? null })
     return refuse(409, 'BOOKING_NOT_MATCHED')
   }
   const { token } = issueAttempt(secret, {

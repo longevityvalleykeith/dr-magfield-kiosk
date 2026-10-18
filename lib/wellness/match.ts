@@ -2,7 +2,7 @@
  * Entity matching: Keith's guardrails, 10-19, checked before the camera opens and again at the
  * point of charge. A booking qualifies only if it is
  *   - at this outlet (KRPM = Calendesk location 6),
- *   - for a wellness service (13 or 14),
+ *   - for any service there, unless KIOSK_SERVICE_IDS restricts it (Keith 10-19: "Any service at KRPM"),
  *   - for today in Kuala Lumpur,
  *   - active ("approved" or "done"), and
  *   - booked under the same email the guest typed.
@@ -52,7 +52,7 @@ export type MatchResult = { ok: true } | { ok: false; reasons: MatchReason[] }
 export function matchBooking(i: MatchInput): MatchResult {
   const reasons: MatchReason[] = []
   if (i.booking.locationId !== i.outlet.locationId) reasons.push('WRONG_OUTLET')
-  if (i.booking.serviceId === null || !i.outlet.serviceIds.includes(i.booking.serviceId)) reasons.push('WRONG_SERVICE')
+  if (i.outlet.serviceIds.length > 0 && (i.booking.serviceId === null || !i.outlet.serviceIds.includes(i.booking.serviceId))) reasons.push('WRONG_SERVICE')
   if (bookingDay(i.booking, i.outlet.timeZone) !== localDay(i.now, i.outlet.timeZone)) reasons.push('NOT_TODAY')
   if (!ACTIVE.has(i.booking.status)) reasons.push('BOOKING_NOT_ACTIVE')
   if (!i.booking.customerEmail || i.booking.customerEmail !== normalizeEmail(i.typedEmail)) reasons.push('EMAIL_MISMATCH')
