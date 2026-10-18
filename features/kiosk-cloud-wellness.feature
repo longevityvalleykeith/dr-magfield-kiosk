@@ -266,3 +266,46 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And Calendesk has booking 505 at location 6 for service 8 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
     When the guest confirms booking 505 with "guest@example.com"
     Then the booking is refused with "WRONG_SERVICE"
+
+  # Brakes (adversarial dogfood 10-19, A1/A4/A2). In-process: each serverless instance keeps its own counts.
+
+  Scenario: K-29 One booking gets at most 2 charged checks a day: a retry after a poor reading, never a third
+    Given the guest already completed 2 checks for booking 501 today
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "BOOKING_ALREADY_CHECKED"
+    And the camera was not opened again
+    And no further process request reached FacePhys
+
+  Scenario: K-30 An attempt matched before the cap was reached is refused at the point of charge
+    Given the guest holds a matched attempt for booking 501 from earlier
+    And the guest already completed 2 checks for booking 501 today
+    When the held attempt is submitted
+    Then the scan is refused with "BOOKING_ALREADY_CHECKED"
+    And no further process request reached FacePhys
+
+  Scenario: K-31 In open mode one booking's checks never use up another guest's
+    Given production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured
+    And Calendesk names employee 12 as "Aisyah" with "aisyah@example.com"
+    And this kiosk tablet is not enrolled
+    And 30 other bookings each completed a check on this kiosk in the last hour
+    When the guest confirms booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
+    And the guest starts the scan
+    Then the kiosk shows the "result" screen
+
+  Scenario: K-32 A client with 10 refused lookups in 10 minutes is slowed down before Calendesk is read
+    Given the client "203.0.113.9" had 10 booking lookups refused in the last 10 minutes
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "TOO_MANY_LOOKUPS"
+    And no further request reached Calendesk
+    When the kiosk is reset for the next guest
+    And the client is "198.51.100.4"
+    And the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk shows the "consent" screen
+
+  Scenario: K-33 At most 60 Calendesk booking reads a minute per instance, whoever asks
+    Given 60 booking lookups from different clients reached Calendesk in the last minute
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "TOO_MANY_LOOKUPS"
+    And no further request reached Calendesk

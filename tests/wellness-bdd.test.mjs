@@ -82,7 +82,7 @@ class World {
     }
   }
 
-  headers(extra = {}) { return { ...(this.cookie ? { cookie: this.cookie } : {}), ...extra } }
+  headers(extra = {}) { return { ...(this.cookie ? { cookie: this.cookie } : {}), ...(this.clientIp ? { 'x-real-ip': this.clientIp } : {}), ...extra } }
 
   async capture(res) {
     const text = await res.text()
@@ -514,6 +514,66 @@ R.Then(/^the refusal log names location (\d+) and service (\d+) and no email add
   assert.equal(line.locationId, +loc)
   assert.equal(line.serviceId, +svc)
   assert.ok(!JSON.stringify(line).includes('@'), 'an email address reached the refusal log')
+})
+
+// ── brakes (adversarial dogfood 10-19: A1 per-booking cap, A4 open-mode buckets, A2 lookup brakes) ──
+const OK = { ok: true, result: { heartRate: 72, hrv: { rmssd: 41, sdnn: 55 }, breathingRate: 14, sqi: 0.9 } }
+async function completeCheck(w, id, email) {
+  w.controller.reset()
+  w.controller.start()
+  await w.controller.submitBooking(String(id), email)
+  assert.equal(w.controller.state.screen, 'consent', `booking ${id}: ${w.lastReply?.body?.code}`)
+  w.controller.setConsent('processing', true)
+  w.controller.setConsent('emailResults', true)
+  await w.controller.acceptConsent()
+  w.process.push({ type: 'ok', body: OK })
+  w.processIndex = w.process.length - 1
+  await w.controller.startScan()
+  assert.equal(w.controller.state.screen, 'result', `booking ${id}: ${w.lastReply?.body?.code}`)
+  w.controller.reset()
+}
+const mark = (w) => { w.mark = { process: w.processCalls().length, calendesk: w.callsTo(HOSTS.calendesk).length, cameraOpens: w.media.openCount } }
+R.Then(/^the camera was not opened again$/, (w) => { assert.equal(w.media.openCount, w.mark.cameraOpens) })
+R.Given(/^the guest already completed (\d+) checks for booking (\d+) today$/, async (w, n, id) => {
+  const email = w.bookings.get(Number(id)).user.email
+  for (let i = 0; i < Number(n); i++) await completeCheck(w, id, email)
+  mark(w)
+})
+R.Given(/^the guest holds a matched attempt for booking (\d+) from earlier$/, async (w, id) => {
+  const r = await w.api().booking({ bookingId: id, email: w.bookings.get(Number(id)).user.email })
+  assert.equal(r.body.status, 'matched')
+  w.heldAttempt = { token: r.body.attemptToken, email: w.bookings.get(Number(id)).user.email }
+})
+R.When(/^the held attempt is submitted$/, async (w) => {
+  w.process.push({ type: 'ok', body: OK })
+  w.processIndex = w.process.length - 1
+  await w.api().scan({ attemptToken: w.heldAttempt.token, email: w.heldAttempt.email, consentVersion: CONSENT_VERSION, processing: true, emailResults: true, share: false, video: new Blob([FAKE_MP4], { type: 'video/mp4' }) })
+})
+R.Then(/^no further process request reached FacePhys$/, (w) => { assert.equal(w.processCalls().length, w.mark.process) })
+R.Then(/^no further request reached Calendesk$/, (w) => { assert.equal(w.callsTo(HOSTS.calendesk).length, w.mark.calendesk) })
+R.Given(/^(\d+) other bookings each completed a check on this kiosk in the last hour$/, async (w, n) => {
+  for (let i = 0; i < Number(n); i++) {
+    const id = 600 + i, email = `other${i}@example.com`
+    w.bookings.set(id, { ...w.bookings.get(501), id, user: { id: 78, email, name: 'Other', surname: 'Guest' } })
+    await completeCheck(w, id, email)
+  }
+})
+R.Given(/^the client "([^"]+)" had (\d+) booking lookups refused in the last 10 minutes$/, async (w, ip, n) => {
+  w.clientIp = ip
+  for (let i = 0; i < Number(n); i++) {
+    const r = await w.api().booking({ bookingId: String(9000 + i), email: 'guest@example.com' })
+    assert.equal(r.body.code, 'BOOKING_NOT_MATCHED')
+  }
+  mark(w)
+})
+R.When(/^the client is "([^"]+)"$/, (w, ip) => { w.clientIp = ip })
+R.Given(/^(\d+) booking lookups from different clients reached Calendesk in the last minute$/, async (w, n) => {
+  for (let i = 0; i < Number(n); i++) {
+    w.clientIp = `198.18.${i >> 8}.${i & 255}`
+    await w.api().booking({ bookingId: '501', email: 'guest@example.com' })
+  }
+  w.clientIp = '192.0.2.200'
+  mark(w)
 })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())
