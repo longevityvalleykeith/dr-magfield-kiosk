@@ -6,3 +6,6 @@ __MACOSX
 
 # TypeScript incremental build artifact
 tsconfig.tsbuildinfo
+
+# local runtime drive screenshots
+scripts/wellness-drive/*.png
