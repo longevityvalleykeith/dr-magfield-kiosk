@@ -318,6 +318,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest asks for a code with "guest@example.com"
     Then the kiosk shows the "code" screen
     And a 6-digit code was emailed to "guest@example.com" and to no one else
+    And Calendesk's booking list was read with today's date filters only, as Foundry reads it in production
     When the guest enters the emailed code
     Then the kiosk shows the "consent" screen
     When the same code is entered again

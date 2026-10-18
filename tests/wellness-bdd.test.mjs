@@ -652,6 +652,16 @@ R.When(/^the same code is entered again$/, async (w) => {
   await w.api().verify({ challengeToken: sent.body.challengeToken, email: 'guest@example.com', code: w.lastCode() })
 })
 R.Then(/^the reply is refused with "([A-Z_]+)"$/, (w, code) => { assert.equal(w.lastReply.body.code, code) })
+R.Then(/^Calendesk's booking list was read with today's date filters only, as Foundry reads it in production$/, (w) => {
+  const lists = w.callsTo(HOSTS.calendesk).filter((c) => c.path === '/api/admin/bookings/v2')
+  assert.ok(lists.length >= 1)
+  for (const c of lists) {
+    const q = new URLSearchParams(c.search)
+    assert.deepEqual([...q.keys()].sort(), ['booking_date_from', 'booking_date_to', 'limit', 'page'])
+    assert.equal(q.get('booking_date_from'), '2026-10-20')
+    assert.equal(q.get('booking_date_to'), '2026-10-20')
+  }
+})
 R.Given(/^Calendesk lists bookings without customer emails$/, (w) => { w.listOmitsEmail = true })
 R.When(/^the phone hides the page$/, (w) => { w.controller.onHidden() })
 R.Then(/^the consent text says the check is for the person who received the code$/, (w) => {

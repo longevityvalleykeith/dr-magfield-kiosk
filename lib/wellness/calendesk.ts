@@ -112,12 +112,13 @@ export async function calendeskReachable(cfg: NonNullable<WellnessConfig['calend
 
 /**
  * Today's active bookings, read with the documented list (GET /admin/bookings/v2, as Foundry's client uses it):
- * day and status filters only. The email is never put in the URL; it is matched here, on the server.
+ * day filters only, exactly as Foundry's production reader calls it. Status and email are matched here, on the server,
+ * so the email never appears in a URL.
  */
 export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk']>, day: string, fetchImpl: typeof fetch): Promise<BookingFacts[] | null> {
   const rows: BookingFacts[] = []
   for (let page = 1; page <= 3; page++) {
-    const q = new URLSearchParams({ booking_date_from: day, booking_date_to: day, status_ids: 'approved,done', limit: '100', page: String(page) })
+    const q = new URLSearchParams({ booking_date_from: day, booking_date_to: day, limit: '100', page: String(page) })
     let body: unknown
     try {
       const res = await fetchImpl(`${cfg.baseUrl}/admin/bookings/v2?${q}`, {
