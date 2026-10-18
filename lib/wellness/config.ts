@@ -18,6 +18,8 @@ export interface WellnessConfig {
   device: { enrollCode: string; cookieSecret: string } | null
   outlet: { slug: string; name: string; locationId: number; serviceIds: number[]; timeZone: string }
   roster: RosterEntry[]
+  tenantId: string
+  retention: { policyVersion: string; days: number | null }
   scanSeconds: number
   minQuality: number
 }
@@ -53,6 +55,8 @@ export function readConfig(env: Env): WellnessConfig {
       timeZone: text(env.KIOSK_TIME_ZONE) || 'Asia/Kuala_Lumpur',
     },
     roster: parseRoster(env.CARE_ROSTER_JSON),
+    tenantId: text(env.KIOSK_TENANT) || 'dr-magfield',
+    retention: { policyVersion: text(env.CONSENT_RETENTION_POLICY) || 'unset', days: text(env.CONSENT_RETENTION_DAYS) ? int(env.CONSENT_RETENTION_DAYS, 0) || null : null },
     scanSeconds: Math.min(30, Math.max(10, int(env.SCAN_SECONDS, 20))),
     minQuality: Number.isFinite(quality) && quality >= 0 && quality <= 1 ? quality : 0.5,
   }

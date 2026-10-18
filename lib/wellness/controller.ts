@@ -16,7 +16,7 @@ export type Screen =
 
 export interface Indicator { key: string; label: string; value: number; unit: string }
 export interface AttemptView { token: string; email: string; maskedEmail: string; care: { name: string; maskedEmail: string } | null; scanSeconds: number }
-export interface ResultView { indicators: Indicator[]; delivery: 'sent' | 'failed'; to: string; cc: string | null }
+export interface ResultView { indicators: Indicator[]; delivery: 'sent' | 'failed'; to: string; cc: string | null; ccStatus: string }
 export interface Consent { processing: boolean; emailResults: boolean; share: boolean }
 export interface KioskState {
   screen: Screen
@@ -186,7 +186,7 @@ export class KioskController {
       if (delivery === 'sent') this.clip = null
       this.set({
         busy: false, screen: 'result',
-        result: { indicators: Array.isArray(b.indicators) ? (b.indicators as Indicator[]) : [], delivery, to: String(b.to ?? ''), cc: typeof b.cc === 'string' ? b.cc : null },
+        result: { indicators: Array.isArray(b.indicators) ? (b.indicators as Indicator[]) : [], delivery, to: String(b.to ?? ''), cc: typeof b.cc === 'string' ? b.cc : null, ccStatus: typeof b.ccStatus === 'string' ? b.ccStatus : 'declined' },
       })
       return
     }

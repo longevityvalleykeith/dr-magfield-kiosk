@@ -41,6 +41,8 @@ The pilot gate in #164 (CLOUD-17) still stands until Keith lifts it.
    - processing by FacePhys, possibly outside Malaysia;
    - email delivery to the booking address;
    - an optional CC to the booking's own CARE employee. It is unticked, offered only if that employee is on the active KRPM roster, and the reply-all consequence is shown.
+
+   If that employee becomes unavailable before the scan, only the CC is dropped. It is never replaced, and the guest's own check still runs (T1 #164 v1.7, O2O-04).
 4. **Camera.** The camera opens (front, no audio), then the guest taps **Start my scan**. That tap is the charge confirmation. The clip is an mp4 of `SCAN_SECONDS` (default 20). The camera closes as soon as the clip exists.
 5. **Server.** The server:
    - re-checks the booking, the email binding and the recipient at the point of charge;
@@ -61,11 +63,34 @@ The pilot gate in #164 (CLOUD-17) still stands until Keith lifts it.
 | Readings (4) | Kiosk screen until reset; the results email | Nothing |
 | Guest email | Typed on the kiosk, compared with Calendesk, used as the email recipient | Nothing (only a keyed hash inside the 15-minute attempt token) |
 | CARE employee email | Server-side roster only; masked on screen; CC recipient | Nothing new |
-| Consent record | One runtime log line, plus an email to `CONSENT_RECORD_TO` if that is set | version · time · attempt ID · keyed booking hash · outlet · share flag · outcome codes |
+| Consent record | One runtime log line, plus an email to `CONSENT_RECORD_TO` if that is set | Fields per T1 #164 `CALENDESK-CONSENT-FIELDS` (Keith: "must include key Calendesk context, explicitly location and CARE employee ID"); see below |
 
 "LV stores nothing" does not mean nothing is stored anywhere. FacePhys, Resend and every mailbox on the email keep their own copies. Counsel has not reviewed this.
 
 Routing the consent record into Foundry's receipts is **deferred** (Keith). Until then the record is only as durable as the Vercel log retention, or the `CONSENT_RECORD_TO` mailbox.
+
+## The consent record (`dmk-consent-v2`)
+
+**Fields:**
+- **Record and tenant:** `consentRecordId` · `attemptId` (= the FacePhys idempotency key without the `dmk-` prefix) · `tenantId` · `calendeskAccountRef` (the tenant name, not a key).
+- **Booking context:** `bookingId` · `locationId` (`location.location_id`) · `serviceLocationId` (`location.id`, kept distinct) · `serviceId` · `serviceTypeId` · `careEmployeeId` (the booking's employee, kept even when the CC is declined; it is not a disclosure grant).
+- **Assurance and notice:** `subjectBinding` · `purpose` · `noticeVersion`.
+- **Decisions:** `processingDecision` · `careCcDecision` (`agreed` / `declined` / `unavailable`).
+- **Recipient bindings:** `guestRecipientRef` and `careRecipientRef`. These are keyed HMACs of the exact destinations shown, never plaintext or an unsalted hash.
+- **Times and policy:** `recordedAt` · `sourceSurface` · `verificationCheckedAt` · `verificationPolicyVersion` · `retentionPolicyVersion` and `deleteAfter`. The retention rule stays `unset`/`null` until Keith sets `CONSENT_RETENTION_POLICY` and `CONSENT_RETENTION_DAYS`; no duration is invented.
+- **Outcomes:** `outcome` · `delivery`. These are the sent/failed codes from the option Keith chose. The supplement says no delivery history is admitted, so **Main to rule** on the difference.
+
+**Never in the record:** video, readings, names, email addresses, raw booking payloads, signed URLs or secrets.
+
+## Assurance and recovery: stated, not claimed
+
+- **Subject assurance is booking-detail knowledge only.** The guest typed the booking number and the booking's email. That proves **neither** that the guest controls that mailbox **nor** that the scanned face is the booking holder.
+  - *Proposal for Main and Keith, not built:* email a one-time code to the booking address before the scan.
+- **Recovery is limited.** The operation identity (attempt ID = idempotency key) lives in the kiosk's memory for 15 minutes, and in the consent record.
+  - After a reset or reload, an *unknown* outcome cannot be recovered by the kiosk. No durable recovery owner is admitted, so that gate stays **held**.
+  - The attempt ID in the consent record is what an operator would quote to FacePhys support.
+  - Replay behaviour is the vendor's **documented** claim (`agent.md`). It is not yet measured.
+- **"Sent" is not "delivered".** It means the mail service took the message. It does not show that both mailboxes received it, and it never means CARE accepted anything.
 
 ## Environment variables (Vercel → `dr-magfield-kiosk-krpm` → Settings → Environment Variables)
 
@@ -86,6 +111,8 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | `KIOSK_ENROLL_CODE` | 16 or more random characters, typed once per tablet at `/scan/enroll` | **yes** |
 | `KIOSK_COOKIE_SECRET` | 32 or more random characters. Changing it un-enrols every tablet and voids open attempts. | **yes** |
 | `CONSENT_RECORD_TO` | optional: an LV mailbox for the minimal consent records | no |
+| `CONSENT_RETENTION_POLICY`, `CONSENT_RETENTION_DAYS` | Keith's retention rule for consent records (a version label and a number of days). Until both are set, records say `unset` | no |
+| `KIOSK_TENANT` | the LV tenant on the record; default `dr-magfield` | no |
 | `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE` | optional overrides; the defaults are 20 · 0.5 · 6 · 13,14 · krpm · DR MAGfield KRPM · Asia/Kuala_Lumpur | no |
 
 **Check the setup without a charge:** open `/api/wellness/health?probe=facephys` on an enrolled tablet. It returns booleans plus FacePhys `auth/test`, never a value.
@@ -95,8 +122,8 @@ Mark every secret **Sensitive**. Set them on **Preview** first, for the own-face
 | #164 | This build | Evidence |
 |---|---|---|
 | CLOUD-01 scope | Optional check in a separate preview; the standee is kept; Vedo can later be a configured tenant | K-01; `/` unchanged |
-| CLOUD-02 data promise | A minimal consent record, by Keith's decision | K-05 |
-| CLOUD-03 sharing | The booking's own employee, roster-checked and never substituted | K-05, K-07 |
+| CLOUD-02/05/14 data promise | A minimal consent record (Keith), with fields per `CALENDESK-CONSENT-FIELDS` and Keith's sent/failed codes | K-05, K-06 |
+| CLOUD-03 sharing | The booking's own employee, roster-checked and never substituted. An ineligible CC never blocks the check. | K-05, K-07, K-17 |
 | CLOUD-04 one contract | A server-owned adapter, with the upload origin validated and no CORS assumed | unit tests; census |
 | CLOUD-04 shared with the PWA | **GAP**: the adapter lives in this repo only | — |
 | CLOUD-05 orchestration | No LV outbox. Recovery uses the vendor's same-key replay. | K-09 |

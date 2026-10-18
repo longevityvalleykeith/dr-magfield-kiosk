@@ -198,7 +198,7 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
           <ul className={styles.results}>{s.result.indicators.map((i) => <li key={i.key}><span>{i.label}</span><strong>{i.value} {i.unit}</strong></li>)}</ul>
           <p className={styles.note}>{copy.disclaimer}</p>
           <p className={styles.lead}>{s.result.delivery === 'sent'
-            ? `Emailed to ${s.result.to}${s.result.cc ? `, CC ${s.result.cc} (DR MAGfield CARE)` : ''}.`
+            ? `Your results email was sent to ${s.result.to}${s.result.ccStatus === 'sent' && s.result.cc ? `, with a copy to ${s.result.cc} (DR MAGfield CARE)` : ''}. Arrival isn’t confirmed.${s.result.ccStatus === 'unavailable' ? ' We couldn’t copy the CARE team member this time.' : ''}`
             : 'We couldn’t send the email. You can try again: it reuses this check.'}</p>
           <div className={styles.row}>
             {s.result.delivery !== 'sent' && <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try sending again</button>}
@@ -214,7 +214,7 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
 
         {s.screen === 'unknown' && (<>
           <h1 className={styles.title}>We’re not sure the analysis finished</h1>
-          <p className={styles.lead}>Trying again is safe: it reuses this same check rather than starting a new one.</p>
+          <p className={styles.lead}>Trying again is safe: it reuses this same check rather than starting a new one. If you finish now, this kiosk can’t look the result up later.</p>
           <div className={styles.row}>
             <button className={styles.primary} onClick={() => void c.retrySameAttempt()}>Try again</button>
             <button className={styles.ghost} onClick={() => c.reset()}>Finish</button>

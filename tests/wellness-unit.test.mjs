@@ -64,7 +64,7 @@ test('result shape is logged as key paths only, never values', () => {
 
 test('Calendesk booking parsing reads the admin fields and the nested customer email, nothing else', () => {
   const b = parseBooking({ data: { id: 501, status: 'Approved', location: { location_id: 6 }, service_id: 13, employee_id: 12, start_date: '2026-10-20', starts_at: '2026-10-20 10:30:00', user: { email: ' Guest@Example.com ', name: 'Name', default_phone: { e164: '+60' } }, control: 'cancel-credential' } })
-  assert.deepEqual(b, { id: 501, status: 'approved', locationId: 6, serviceId: 13, employeeId: 12, startDate: '2026-10-20', startsAt: '2026-10-20 10:30:00', customerEmail: 'guest@example.com' })
+  assert.deepEqual(b, { id: 501, status: 'approved', locationId: 6, serviceLocationId: null, serviceId: 13, serviceTypeId: null, employeeId: 12, startDate: '2026-10-20', startsAt: '2026-10-20 10:30:00', customerEmail: 'guest@example.com' })
   assert.equal(parseBooking({ data: { status: 'approved' } }), null)
 })
 

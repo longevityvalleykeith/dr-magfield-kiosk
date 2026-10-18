@@ -11,7 +11,9 @@ export interface BookingFacts {
   id: number
   status: string
   locationId: number | null
+  serviceLocationId: number | null
   serviceId: number | null
+  serviceTypeId: number | null
   employeeId: number | null
   startDate: string | null
   startsAt: string | null
@@ -41,7 +43,9 @@ export function parseBooking(raw: unknown): BookingFacts | null {
     id,
     status: status.toLowerCase(),
     locationId: int(location?.location_id),
+    serviceLocationId: int(location?.id),
     serviceId: int(row.service_id),
+    serviceTypeId: int(row.service_type_id),
     employeeId: int(row.employee_id),
     startDate: str(row.start_date),
     startsAt: str(row.starts_at),

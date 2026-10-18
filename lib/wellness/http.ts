@@ -18,7 +18,7 @@ import { authTest, submitVideo } from './facephys.ts'
 import { keyPaths, normalizeResult } from './result.ts'
 import { composeResultEmail, sendEmail } from './email.ts'
 import { consentRecord } from './record.ts'
-import type { Delivery, Outcome } from './record.ts'
+import type { CcDecision, Delivery, Outcome, RecordInput } from './record.ts'
 import { deviceIdFrom, emailHash, enrollCodeMatches, issueAttempt, issueDevice, readAttempt } from './tokens.ts'
 import { allowSubmission, enrollBudgetLeft, noteEnrollFailure } from './limits.ts'
 import { sha256Hex } from './crypto.ts'
@@ -136,7 +136,6 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   if (!attempt || !isEmail(email) || emailHash(secret, email) !== attempt.emailHash) return refuse(400, 'ATTEMPT_INVALID')
   if (field('consentVersion') !== CONSENT_VERSION || field('processing') !== 'true' || field('emailResults') !== 'true') return refuse(400, 'CONSENT_REQUIRED')
   const share = field('share') === 'true'
-  if (share && attempt.careEmployeeId === null) return refuse(409, 'RECIPIENT_UNAVAILABLE')
 
   const file = form.get('video')
   if (!file || typeof file === 'string' || file.size < MIN_VIDEO || file.size > MAX_VIDEO) return refuse(422, 'VIDEO_UNSUPPORTED')
@@ -152,14 +151,18 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
     deps.log('booking_changed', { reasons: m.reasons })
     return refuse(409, 'BOOKING_CHANGED')
   }
-  // Recipient re-resolved before delivery (CLOUD-08): still the booking's own employee, still active here.
-  const care = share ? careRecipientFor(config.roster, attempt.careEmployeeId, config.outlet.slug) : null
-  if (share && (!care || care.calendeskEmployeeId !== read.booking.employeeId)) return refuse(409, 'RECIPIENT_UNAVAILABLE')
+  // The recipient is re-resolved before delivery (CLOUD-08): still the booking's own employee, still active here.
+  // If not, the CC is dropped (never replaced) and the guest's own check still runs (v1.7 O2O-04).
+  const resolved = share ? careRecipientFor(config.roster, attempt.careEmployeeId, config.outlet.slug) : null
+  const care = resolved && resolved.calendeskEmployeeId === read.booking.employeeId ? resolved : null
+  const ccDecision: CcDecision = !share ? 'declined' : care ? 'agreed' : 'unavailable'
   if (!allowSubmission(deviceId, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
 
+  const booking = read.booking
   const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, {
-    consentVersion: CONSENT_VERSION, at: now, attemptId: attempt.attemptId, bookingId: attempt.bookingId,
-    outlet: config.outlet.slug, shared: care !== null, outcome, delivery,
+    attemptId: attempt.attemptId, tenantId: config.tenantId, calendeskAccountRef: config.calendesk!.tenant, booking,
+    noticeVersion: CONSENT_VERSION, careCcDecision: ccDecision, guestEmail: email, care,
+    verifiedAt: now, recordedAt: deps.now(), retention: config.retention, outcome, delivery,
   })
 
   const submission = await submitVideo(config.facephys!, { video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}` }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
@@ -189,10 +192,11 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   })
   const delivery = await sendEmail(config.mail!, { to: email, cc: care?.email ?? null, ...message }, `dmk-${attempt.attemptId}`, deps.fetch)
   await record('completed', delivery)
-  return json(200, { status: 'completed', indicators: reading.indicators, delivery, to: mask(email), cc: care ? care.name : null, retryable: delivery === 'failed' })
+  // 'sent' means the mail service took the message, not that both mailboxes received it, and never CARE acceptance.
+  return json(200, { status: 'completed', indicators: reading.indicators, delivery, to: mask(email), cc: care ? care.name : null, ccStatus: care ? delivery : ccDecision, retryable: delivery === 'failed' })
 }
 
-async function writeRecord(deps: Deps, config: WellnessConfig, secret: string, f: Parameters<typeof consentRecord>[1]): Promise<void> {
+async function writeRecord(deps: Deps, config: WellnessConfig, secret: string, f: RecordInput): Promise<void> {
   const rec = consentRecord(secret, f)
   deps.log('consent_record', { ...rec })
   const to = config.mail?.consentRecordTo

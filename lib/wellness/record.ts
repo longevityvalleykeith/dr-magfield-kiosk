@@ -1,46 +1,101 @@
 /**
- * The minimal consent record (Keith, 10-19: "Minimal consent record as per 2 : defer intent object
- * routing for now"). It holds:
- *   - the consent version;
- *   - the time;
- *   - an opaque attempt ID;
- *   - a keyed hash of the booking ID;
- *   - the outlet;
- *   - whether the guest asked for a CC;
- *   - outcome codes.
- * It never holds video, readings, names or email addresses.
+ * The minimal consent record. Keith, 10-19: "Minimal consent record as per 2 : defer intent object
+ * routing for now", clarified as "minimal consent evidence must include key Calendesk context,
+ * explicitly location and CARE employee ID". The fields follow T1 #164 CALENDESK-CONSENT-FIELDS
+ * (cc4e7f5e), plus the sent/failed codes from the option Keith chose.
  *
- * Routing into Foundry's existing receipts (Main's lane) is deferred. Until then the record is
- * written in two places:
- *   (1) one structured runtime log line, kept only as long as the host retains logs;
- *   (2) if CONSENT_RECORD_TO is set, a small email of the same fields to that LV mailbox.
+ * Never in the record: video, readings, names, email addresses (only keyed recipient bindings),
+ * raw booking payloads, signed URLs or secrets.
+ *
+ * Subject assurance is stated honestly. The guest typed the booking number and the booking's email
+ * ("booking-detail knowledge"). That proves neither mailbox control nor that the scanned face is
+ * the booking holder.
+ *
+ * Routing into Foundry's receipts is deferred. The record is one runtime log line, plus an email to
+ * CONSENT_RECORD_TO when that is set. Its retention rule stays "unset" until Keith sets
+ * CONSENT_RETENTION_POLICY.
  */
-import { hmacHex } from './crypto.ts'
+import { hmacHex, newId } from './crypto.ts'
+import type { BookingFacts } from './calendesk.ts'
+import type { RosterEntry } from './roster.ts'
 
 export type Outcome = 'completed' | 'insufficient_quality' | 'failed' | 'unknown_outcome' | 'not_submitted'
 export type Delivery = 'sent' | 'failed' | 'not_attempted'
+export type CcDecision = 'agreed' | 'declined' | 'unavailable'
 
 export interface ConsentRecord {
-  v: 1
-  consentVersion: string
-  acceptedAt: string
+  schemaVersion: 'dmk-consent-v2'
+  consentRecordId: string
   attemptId: string
-  bookingRef: string
-  outlet: string
-  shared: boolean
+  tenantId: string
+  calendeskAccountRef: string
+  bookingId: number
+  locationId: number | null
+  serviceLocationId: number | null
+  serviceId: number | null
+  serviceTypeId: number | null
+  careEmployeeId: number | null
+  subjectBinding: 'booking-detail-knowledge-v1'
+  purpose: 'optional-wellness-indicators-cloud-v3'
+  noticeVersion: string
+  processingDecision: 'agreed'
+  careCcDecision: CcDecision
+  guestRecipientRef: string
+  careRecipientRef: string | null
+  recordedAt: string
+  sourceSurface: 'dmk-kiosk'
+  verificationCheckedAt: string
+  verificationPolicyVersion: 'dmk-entity-match-v1'
+  retentionPolicyVersion: string
+  deleteAfter: string | null
   outcome: Outcome
   delivery: Delivery
 }
 
-export function consentRecord(secret: string, f: { consentVersion: string; at: Date; attemptId: string; bookingId: number; outlet: string; shared: boolean; outcome: Outcome; delivery: Delivery }): ConsentRecord {
+export interface RecordInput {
+  attemptId: string
+  tenantId: string
+  calendeskAccountRef: string
+  booking: BookingFacts
+  noticeVersion: string
+  careCcDecision: CcDecision
+  guestEmail: string
+  care: RosterEntry | null
+  verifiedAt: Date
+  recordedAt: Date
+  retention: { policyVersion: string; days: number | null }
+  outcome: Outcome
+  delivery: Delivery
+}
+
+export function consentRecord(secret: string, f: RecordInput): ConsentRecord {
   return {
-    v: 1,
-    consentVersion: f.consentVersion,
-    acceptedAt: f.at.toISOString(),
+    schemaVersion: 'dmk-consent-v2',
+    consentRecordId: newId(),
     attemptId: f.attemptId,
-    bookingRef: hmacHex(secret, `dmk-booking-v1.${f.bookingId}`),
-    outlet: f.outlet,
-    shared: f.shared,
+    tenantId: f.tenantId,
+    calendeskAccountRef: f.calendeskAccountRef,
+    bookingId: f.booking.id,
+    locationId: f.booking.locationId,
+    serviceLocationId: f.booking.serviceLocationId,
+    serviceId: f.booking.serviceId,
+    serviceTypeId: f.booking.serviceTypeId,
+    // Booking context: kept even when the CC is declined. It is not a disclosure grant.
+    careEmployeeId: f.booking.employeeId,
+    subjectBinding: 'booking-detail-knowledge-v1',
+    purpose: 'optional-wellness-indicators-cloud-v3',
+    noticeVersion: f.noticeVersion,
+    processingDecision: 'agreed',
+    careCcDecision: f.careCcDecision,
+    // Keyed bindings to the exact destinations shown, never plaintext or an unsalted hash.
+    guestRecipientRef: hmacHex(secret, `dmk-recipient-v1.${f.guestEmail}`),
+    careRecipientRef: f.care && f.careCcDecision === 'agreed' ? hmacHex(secret, `dmk-care-recipient-v1.${f.care.calendeskEmployeeId}.${f.care.email}`) : null,
+    recordedAt: f.recordedAt.toISOString(),
+    sourceSurface: 'dmk-kiosk',
+    verificationCheckedAt: f.verifiedAt.toISOString(),
+    verificationPolicyVersion: 'dmk-entity-match-v1',
+    retentionPolicyVersion: f.retention.policyVersion,
+    deleteAfter: f.retention.days ? new Date(f.recordedAt.getTime() + f.retention.days * 86_400_000).toISOString() : null,
     outcome: f.outcome,
     delivery: f.delivery,
   }
