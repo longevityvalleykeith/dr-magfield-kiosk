@@ -124,6 +124,7 @@ class World {
     if (u.host === HOSTS.facephys) {
       const expected = createHmac('sha256', SECRETS.facephys).update(headers['x-timestamp'] || '').digest('base64')
       if (headers['x-key-id'] !== 'kid-test' || headers['x-signature'] !== expected) return json(401, { error: 'invalid signature' })
+      if (u.pathname === '/api/agent/auth/test' && method === 'GET') return json(200, { ok: true, keyId: 'kid-test', apiVersion: 3, checkedAt: this.now.toISOString(), secretShown: false })
       if (u.pathname === '/api/v2/video/upload/presign' && method === 'POST') {
         this.objects++
         return json(200, { uploadUrl: `https://${HOSTS.oss}/kiosk%2Fobj-${this.objects}.mp4?Signature=ab%2Fcd&Expires=1`, objectKey: `kiosk/obj-${this.objects}.mp4` })
@@ -471,6 +472,16 @@ R.Then(/^no consent-record email went to "([^"]+)"$/, (w) => { assert.equal(w.re
 R.Then(/^the consent record line is still written$/, (w) => {
   assert.equal(w.records().length, 1)
   assert.ok(w.logs.some((l) => JSON.parse(l).event === 'consent_record_email_skipped'), 'the skip must be logged')
+})
+
+R.Given(/^same-key retry is switched on$/, (w) => { w.env.SAME_KEY_RETRY = '1' })
+R.When(/^the same attempt is resent at the network level$/, async (w) => { await w.api().scan(w.lastScanInput) })
+R.Then(/^the kiosk offers no retry and shows the reference of the consent record's attempt$/, (w) => {
+  const s = w.controller.state
+  assert.equal(s.retryable, false)
+  assert.match(s.reference ?? '', /^[0-9a-f]{8}$/)
+  const [rec] = w.records()
+  assert.ok(rec.attemptId.startsWith(s.reference), 'the reference must locate the consent record')
 })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())

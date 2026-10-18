@@ -93,14 +93,16 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And the kiosk shows the "result" screen
 
   Scenario: K-08 A double tap never creates a second charge (O2O-06)
-    Given the guest confirmed booking 501 with "guest@example.com"
+    Given same-key retry is switched on
+    And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan twice for the same attempt
     Then every process request carried the same idempotency key and the same video SHA-256
 
   Scenario: K-09 A lost FacePhys response stays unknown, and a retry reuses the same key (O2O-07)
-    Given the guest confirmed booking 501 with "guest@example.com"
+    Given same-key retry is switched on
+    And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys accepts the process request but its response is lost
     When the guest starts the scan
@@ -213,3 +215,16 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
     And the scan reply reports the CC as "unavailable"
+
+  Scenario: K-23 By default an unknown outcome stops: no retry, and a reference to reconcile (O2O-07)
+    Given the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    And FacePhys accepts the process request but its response is lost
+    When the guest starts the scan
+    Then the kiosk shows the "unknown" screen
+    And the kiosk offers no retry and shows the reference of the consent record's attempt
+    When the guest retries the same attempt
+    Then FacePhys received exactly 1 presign, 1 upload and 1 process request
+    When the same attempt is resent at the network level
+    Then the scan is refused with "ATTEMPT_ALREADY_SUBMITTED"
+    And FacePhys received exactly 1 presign, 1 upload and 1 process request

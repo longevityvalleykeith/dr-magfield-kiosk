@@ -53,7 +53,9 @@ test('results: poor quality, a missing heart rate or an implausible value never 
   assert.equal(normalizeResult({ rmssd: 40 }, 0.5).kind, 'insufficient_quality')
   assert.equal(normalizeResult({ heartRate: 400 }, 0.5).kind, 'insufficient_quality')
   assert.equal(normalizeResult(null, 0.5).kind, 'insufficient_quality')
-  assert.equal(normalizeResult({ heartRate: { value: 66 } }, 0.5).kind, 'completed')
+  assert.equal(normalizeResult({ heartRate: { value: 66 }, sqi: 0.9 }, 0.5).kind, 'completed')
+  assert.equal(normalizeResult({ heartRate: 66 }, 0.5).kind, 'insufficient_quality', 'no quality field is not a reading')
+  assert.equal(normalizeResult({ heartRate: 66 }, 0.5, true).kind, 'completed', 'unless ALLOW_MISSING_QUALITY=1')
 })
 
 test('result shape is logged as key paths only, never values', () => {
@@ -112,7 +114,7 @@ test('device cookie and attempt token refuse tampering, expiry and a swapped ema
   assert.equal(deviceIdFrom(SECRET, `__Host-dmk-device=${dev.value}x`, now + 1), null)
   assert.equal(deviceIdFrom('another-secret-another-secret-0000000', `__Host-dmk-device=${dev.value}`, now + 1), null)
   assert.equal(deviceIdFrom(SECRET, `__Host-dmk-device=${dev.value}`, now + 31 * 24 * 3600 * 1000), null)
-  const t = issueAttempt(SECRET, { bookingId: 501, emailHash: emailHash(SECRET, 'g@x.co'), careEmployeeId: 12 }, now)
+  const t = issueAttempt(SECRET, { bookingId: 501, emailHash: emailHash(SECRET, 'g@x.co'), careEmployeeId: 12, careEmailHash: null }, now)
   const a = readAttempt(SECRET, t.token, now + 1)
   assert.equal(a.attemptId, t.attemptId)
   assert.equal(a.bookingId, 501)
@@ -138,7 +140,7 @@ test('only an ISO-BMFF ("ftyp") file counts as mp4; masking hides the address', 
   assert.equal(mask('guest@example.com'), 'g•••@example.com')
 })
 
-test('a platform 504 with no body after submit is "unknown" and keeps the clip for a same-key retry', async () => {
+test('a platform 504 with no body after submit is "unknown": stop and reconcile, so no retry and the clip is dropped', async () => {
   const media = { on: false, supported: () => true, async open() { this.on = true }, async record() { return new Blob([new Uint8Array(2048)], { type: 'video/mp4' }) }, close() { this.on = false }, isOpen() { return this.on } }
   const replies = [{ status: 200, body: { status: 'matched', attemptToken: 't', maskedEmail: 'g•••@x.co', care: null, scanSeconds: 10 } }, { status: 504, body: null }]
   const api = { booking: async () => replies[0], scan: async () => replies[1] }
@@ -147,6 +149,7 @@ test('a platform 504 with no body after submit is "unknown" and keeps the clip f
   c.setConsent('processing', true); c.setConsent('emailResults', true); await c.acceptConsent()
   await c.startScan()
   assert.equal(c.state.screen, 'unknown')
-  assert.equal(c.hasRecording(), true)
+  assert.equal(c.state.retryable, false)
+  assert.equal(c.hasRecording(), false)
   assert.equal(media.isOpen(), false, 'the camera is off once the clip exists')
 })
