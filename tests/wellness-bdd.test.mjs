@@ -654,6 +654,9 @@ R.Then(/^the reply has the same shape as the reply for "([^"]+)"$/, async (w, ot
 R.Then(/^booking (\d+) at another outlet was never read in full$/, (w, id) => {
   assert.equal(w.callsTo(HOSTS.calendesk).filter((c) => c.path === `/api/admin/bookings/${id}`).length, 0)
 })
+R.Then(/^no Calendesk booking was read in full$/, (w) => {
+  assert.equal(w.callsTo(HOSTS.calendesk).filter((c) => /^\/api\/admin\/bookings\/\d+$/.test(c.path)).length, 0)
+})
 R.When(/^the same code is entered again$/, async (w) => {
   const sent = [...w.responses].reverse().find((r) => r.body?.status === 'code_sent')
   await w.api().verify({ challengeToken: sent.body.challengeToken, email: 'guest@example.com', code: w.lastCode() })

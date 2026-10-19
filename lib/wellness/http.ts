@@ -123,8 +123,8 @@ const DAY_LIST_TTL_MS = 30_000
 /**
  * The typed email's booking today at this outlet. Earliest start wins.
  * - Today's list (day filters only, as Foundry's production reader calls it) is kept 30 s per instance.
- * - A row at this outlet with the email is checked directly. A row whose list entry lacks the email or the location
- *   (booking 21, 10-19) is read in full, at most 25, in parallel. A row positively at another outlet is never read.
+ * - Active rows with the typed email are candidates only. Each distinct ID is read in full, at most 25, in parallel.
+ *   Only the fresh detail can authorize an email. A list location cannot authorize or reject a candidate.
  * - The refusal keeps the reasons of the typed email's own rows, so a miss is self-diagnosing.
  */
 async function findBooking(config: WellnessConfig, email: string, now: Date, deps: Deps): Promise<{ kind: 'match'; booking: BookingFacts } | { kind: 'none'; reasons: MatchReason[]; booking: BookingFacts | null } | { kind: 'unavailable' }> {
@@ -134,21 +134,22 @@ async function findBooking(config: WellnessConfig, email: string, now: Date, dep
   const fresh = (): Promise<BookingFacts[] | null> => listDayBookings(config.calendesk!, day, deps.fetch, (n, keys) => deps.log('booking_list_shape', { rows: n, keys }))
   const cached = brakes.dayList && brakes.dayList.day === day && now.getTime() - brakes.dayList.at < DAY_LIST_TTL_MS ? (brakes.dayList.rows as BookingFacts[]) : null
   // A cached list that can't place this email may predate the booking (made seconds ago), so it is read again.
-  const usable = cached && cached.some((b) => b.customerEmail === email || b.customerEmail === null) ? cached : null
+  const usable = cached && cached.some((b) => b.customerEmail === email) ? cached : null
   const rows = usable ?? await fresh()
   if (rows === null) return { kind: 'unavailable' }
   if (!usable) brakes.dayList = { day, at: now.getTime(), rows }
   const byStart = [...rows].sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)))
-  const here = config.outlet.locationId
-  const mine = byStart.filter((b) => b.customerEmail === email && b.locationId !== null)
-  for (const row of mine) if (row.locationId === here && check(row).ok) return { kind: 'match', booking: row }
-  // Read in full: rows whose list entry lacks the email (at this outlet or unplaced), or has the email but no location.
-  const unknown = byStart.filter((b) => (b.customerEmail === null && (b.locationId === null || b.locationId === here)) || (b.customerEmail === email && b.locationId === null)).slice(0, 25)
-  const reads = await Promise.all(unknown.map((row) => readBooking(config.calendesk!, row.id, deps.fetch)))
+  const mine = byStart.filter((b) => b.customerEmail === email)
+  const candidates = new Map<number, BookingFacts>()
+  for (const row of mine) {
+    if ((row.status === 'approved' || row.status === 'done') && !candidates.has(row.id)) candidates.set(row.id, row)
+  }
+  if (candidates.size > 25) return { kind: 'unavailable' }
+  const reads = await Promise.all([...candidates.keys()].map((id) => readBooking(config.calendesk!, id, deps.fetch)))
   if (reads.some((r) => !r.ok && r.reason === 'BOOKING_UNAVAILABLE')) return { kind: 'unavailable' }
-  const full = reads.flatMap((r) => (r.ok && r.booking.customerEmail === email ? [r.booking] : []))
+  const full = reads.flatMap((r) => (r.ok ? [r.booking] : []))
   for (const b of full) if (check(b).ok) return { kind: 'match', booking: b }
-  const seen = [...mine, ...full]
+  const seen = [...full, ...mine.filter((b) => b.status !== 'approved' && b.status !== 'done')]
   if (seen.length === 0) return { kind: 'none', reasons: ['BOOKING_NOT_FOUND'], booking: null }
   const first = check(seen[0])
   return { kind: 'none', reasons: first.ok ? ['BOOKING_NOT_FOUND'] : first.reasons, booking: seen[0] }
@@ -231,18 +232,7 @@ export async function handleVerify(req: Request, deps: Deps): Promise<Response> 
     deps.log('booking_changed', { reasons: found.reasons })
     return refuse(409, 'BOOKING_CHANGED')
   }
-  // A list row is a candidate only: the attempt is issued on a fresh read by ID (as Foundry's reader does), re-matched.
-  const read = await readBooking(config.calendesk!, found.booking.id, deps.fetch)
-  if (!read.ok) {
-    if (read.reason === 'BOOKING_UNAVAILABLE') { brakes.releaseCode(ch.challengeId); return refuse(503, 'BOOKING_UNAVAILABLE') }
-    return refuse(409, 'BOOKING_CHANGED')
-  }
-  const rematch = matchBooking({ booking: read.booking, typedEmail: email, outlet: config.outlet, roster: config.roster, now })
-  if (!rematch.ok) {
-    deps.log('booking_changed', { reasons: rematch.reasons })
-    return refuse(409, 'BOOKING_CHANGED')
-  }
-  const booking = read.booking
+  const booking = found.booking
   if (!brakes.bookingChecksLeft(bookingDayKey(config, booking.id, now))) {
     deps.log('booking_already_checked', {})
     return refuse(409, 'BOOKING_ALREADY_CHECKED')

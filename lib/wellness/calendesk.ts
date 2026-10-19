@@ -119,6 +119,7 @@ export async function calendeskReachable(cfg: NonNullable<WellnessConfig['calend
 export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk']>, day: string, fetchImpl: typeof fetch, onShape: (rows: number, keys: string[]) => void = () => undefined): Promise<BookingFacts[] | null> {
   const rows: BookingFacts[] = []
   let shaped = false
+  let lastPage: number | null = null
   for (let page = 1; page <= 3; page++) {
     const q = new URLSearchParams({ booking_date_from: day, booking_date_to: day, limit: '100', page: String(page) })
     let body: unknown
@@ -131,11 +132,18 @@ export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk
     } catch { return null }
     const top = obj(body)
     if (!top || !Array.isArray(top.data)) return null
+    const last = int(top.last_page)
+    if (last === null || last < page || last > 3 || (lastPage !== null && last !== lastPage)) return null
+    if ('current_page' in top && int(top.current_page) !== page) return null
+    lastPage = last
     // Field names only (never values), so the list's real shape can be calibrated from the logs (booking 21, 10-19).
     if (!shaped) { shaped = true; onShape(top.data.length, top.data.length > 0 ? keyPaths(top.data[0]).slice(0, 60) : []) }
-    for (const raw of top.data) { const b = parseBooking(raw); if (b) rows.push(b) }
-    const last = int(top.last_page)
-    if (last === null || page >= last) break
+    for (const raw of top.data) {
+      const booking = parseBooking(raw)
+      if (!booking) return null
+      rows.push(booking)
+    }
+    if (page === last) return rows
   }
-  return rows
+  return null
 }

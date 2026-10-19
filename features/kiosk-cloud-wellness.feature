@@ -349,11 +349,12 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest asks for a code with "guest@example.com"
     Then no further code email was sent
 
-  Scenario: K-39 When Calendesk's booking list leaves out customer emails, the kiosk reads each KRPM booking to match
+  Scenario: K-39 A list without customer emails cannot authorize mail or unrelated detail reads
     Given Calendesk lists bookings without customer emails
     And Calendesk has booking 512 at location 7 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
     When the guest asks for a code with "guest@example.com"
-    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+    Then no code email was sent
+    And no Calendesk booking was read in full
     And booking 512 at another outlet was never read in full
 
   Scenario: K-40 Matching by email counts only today's active KRPM bookings
