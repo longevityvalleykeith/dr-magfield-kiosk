@@ -70,6 +70,8 @@ class World {
     this.presignHost = HOSTS.oss
     this.media = new FakeMedia()
     this.brakes = new Brakes()
+    this.waits = []
+    this.mailRefuses = false
     this.controller = new KioskController({ api: this.api(), media: this.media, scanSeconds: 20 })
   }
 
@@ -80,6 +82,7 @@ class World {
       now: () => this.now,
       log: (event, fields) => { this.logs.push(JSON.stringify({ event, ...fields })) },
       brakes: this.brakes,
+      wait: async (ms) => { this.waits.push(ms) },
     }
   }
 
@@ -171,6 +174,7 @@ class World {
         const rows = [...this.bookings.values()]
           .filter((b) => (!from || b.start_date >= from) && (!to || b.start_date <= to) && (statuses.length === 0 || statuses.includes(b.status)))
           .map((b) => (this.listOmitsEmail ? { ...b, user: undefined } : b))
+          .map((b) => (this.listOmitsLocation ? { ...b, location: undefined } : b))
         return json(200, { data: rows, current_page: 1, last_page: 1, per_page: 100, total: rows.length })
       }
       const e = /^\/api\/admin\/employees\/(\d+)$/.exec(u.pathname)
@@ -182,6 +186,7 @@ class World {
     }
     if (u.host === HOSTS.mail) {
       if (headers.authorization !== `Bearer ${SECRETS.mail}`) return json(401, {})
+      if (this.mailRefuses) return json(422, { message: 'refused' })
       return json(200, { id: `em_${this.calls.length}` })
     }
     throw new Error(`unexpected host ${u.host}`)
@@ -256,9 +261,11 @@ R.Given(/^the wellness check is switched off$/, (w) => { w.env.SCANS_ENABLED = '
 R.When(/^the guest declines the wellness check$/, (w) => { w.controller.decline() })
 /** Confirms a booking through whichever gate the kiosk has: a direct match, or the code emailed to the booking's inbox. */
 async function confirm(w, id, email) {
+  // No booking number in the product: "booking N" is this guest's one booking under that email today.
+  for (const [k, b] of w.bookings) if (k !== Number(id) && b.user?.email === email) w.bookings.delete(k)
   w.controller.start()
   const before = w.codeMails().length
-  await w.controller.submitBooking(id, email)
+  await w.controller.submitBooking('', email)
   if (w.controller.state.screen === 'code' && w.codeMails().length > before) await w.controller.submitCode(w.lastCode())
 }
 R.When(/^the guest confirms booking (\d+) with "([^"]+)"$/, async (w, id, email) => { await confirm(w, id, email) })
@@ -596,7 +603,7 @@ R.Given(/^(\d+) other bookings each completed a check on this kiosk in the last 
 R.Given(/^the client "([^"]+)" had (\d+) booking lookups refused in the last 10 minutes$/, async (w, ip, n) => {
   w.clientIp = ip
   for (let i = 0; i < Number(n); i++) {
-    const r = await w.api().booking({ bookingId: String(9000 + i), email: 'guest@example.com' })
+    const r = await w.api().booking({ bookingId: '', email: `nobody${i}@example.com` })
     assert.notEqual(r.body.status, 'matched')
     assert.notEqual(r.status, 429)
   }
@@ -668,6 +675,37 @@ R.Then(/^the consent text says the check is for the person who received the code
   assert.equal(w.controller.state.screen, 'consent')
   assert.ok(CONSENT_TEXT.en.points.some((p) => p.includes('person who received the code')))
   assert.ok(CONSENT_TEXT.ms.points.some((p) => p.includes('orang yang menerima kod')))
+})
+
+// ── no-store cures (10-19) ────────────────────────────────────────────
+R.When(/^FacePhys presigns uploads to its own storage again$/, (w) => { w.presignHost = HOSTS.oss })
+R.When(/^the guest completes another check for booking (\d+)$/, async (w, id) => {
+  w.controller.reset()
+  await confirm(w, id, w.bookings.get(Number(id)).user.email)
+  assert.equal(w.controller.state.screen, 'consent', `booking ${id}: ${w.lastReply?.body?.code}`)
+  w.controller.setConsent('processing', true); w.controller.setConsent('emailResults', true)
+  await w.controller.acceptConsent()
+  w.process.push({ type: 'ok', body: OK }); w.processIndex = w.process.length - 1
+  await w.controller.startScan()
+})
+R.Given(/^Calendesk lists bookings without their location$/, (w) => { w.listOmitsLocation = true })
+R.When(/^a lookup names booking (\d+) with "([^"]+)"$/, async (w, id, email) => { await w.api().booking({ bookingId: id, email }) })
+R.Then(/^both lookups were held to the same reply time$/, (w) => {
+  assert.equal(w.waits.length, 2, 'each lookup is padded')
+  assert.equal(w.waits[0], w.waits[1])
+  assert.ok(w.waits[0] >= 1000)
+})
+R.Given(/^the mail provider refuses messages$/, (w) => { w.mailRefuses = true })
+R.Then(/^Calendesk's booking list was read (\d+) times?$/, (w, n) => {
+  assert.equal(w.callsTo(HOSTS.calendesk).filter((c) => c.path === '/api/admin/bookings/v2').length, Number(n))
+})
+R.Then(/^the booking list shape was logged with field names and no values$/, (w) => {
+  const lines = w.logs.filter((l) => JSON.parse(l).event === 'booking_list_shape')
+  assert.equal(lines.length, 1)
+  const l = JSON.parse(lines[0])
+  assert.ok(Array.isArray(l.keys) && l.keys.includes('location.location_id') && l.keys.includes('user.email'))
+  assert.ok(!lines[0].includes('@'), 'no email address in the shape line')
+  assert.equal(typeof l.rows, 'number')
 })
 
 runFeature(join(ROOT, 'features', 'kiosk-cloud-wellness.feature'), R, () => new World())
