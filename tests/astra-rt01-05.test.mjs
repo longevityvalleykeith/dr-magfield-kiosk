@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleBooking, handleVerify, handleScan } from '../lib/wellness/http.ts'
 import { Brakes } from '../lib/wellness/limits.ts'
+import { MemoryStateStore } from '../lib/wellness/state-memory.ts'
 import { CONSENT_VERSION } from '../lib/wellness/consent.ts'
 const EMAIL = 'synthetic@example.invalid'
 const NOW = new Date('2026-10-19T04:00:00Z')
@@ -11,7 +12,7 @@ const json = (x, status=200) => new Response(JSON.stringify(x), { status, header
 const request = (path, body) => new Request('https://kiosk.invalid'+path, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) })
 function world() {
   const state = { mail:[], process:[], hold:[], processMode:'completed', detailFail:false }
-  const deps = { env, now:()=>NOW, brakes:new Brakes(), log:()=>{}, fetch: async(input,init={})=>{
+  const deps = { env: { ...env, FACEPHYS_UPLOAD_HOSTS:'synthetic-bucket.s3.amazonaws.com', CONSENT_RETENTION_DAYS:'30', CONSENT_RETENTION_POLICY:'dmk-30-days-v1' }, state:new MemoryStateStore(()=>NOW), now:()=>NOW, brakes:new Brakes(), log:()=>{}, fetch: async(input,init={})=>{
     const u = new URL(String(input))
     if (u.hostname === 'calendesk.invalid') {
       if (u.pathname.endsWith('/v2')) return json({data:[row], last_page:1})
