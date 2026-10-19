@@ -122,3 +122,13 @@ test('the WhatsApp line is the public business number and nothing else', () => {
   assert.ok(whatsappUrl('Hi Arie').startsWith('https://wa.me/60126595319?text='))
   assert.ok(!whatsappUrl('a b').includes(' '), 'the message must be url-encoded')
 })
+
+// ── P3 (Main, 10-19): no macOS resource forks in the served public folder ─
+test('PUB-1: nothing under public/ is a __MACOSX folder or an AppleDouble "._" file', async () => {
+  const { readdirSync, statSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const bad = []
+  const walk = (d) => { for (const n of readdirSync(d)) { const p = join(d, n); if (n === '__MACOSX' || n.startsWith('._')) bad.push(p); else if (statSync(p).isDirectory()) walk(p) } }
+  walk(new URL('../public', import.meta.url).pathname)
+  assert.deepEqual(bad, [])
+})

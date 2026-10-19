@@ -8,8 +8,8 @@
  *   never the address) and to the booking's CARE employee ID. The scan cannot swap any of them.
  *   Its attempt ID is the FacePhys idempotency key.
  * - **Code challenge** (10 minutes). It carries a keyed hash of the 6-digit code emailed to the booking's inbox, never the
- *   code itself, so LV stores nothing and the page can't read the code back. An unmatched email gets a challenge no
- *   code can open, so the reply never reveals whether a booking exists.
+ *   code itself, so LV stores nothing and the page can't read the code back. A real and a decoy challenge carry the
+ *   same fields, and no booking ID.
  */
 import { hmacHex, newCode, newId, sameSecret, seal, unseal } from './crypto.ts'
 
@@ -64,27 +64,29 @@ export function readAttempt(secret: string, token: string | null, nowMs: number)
   return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: c as number | null, careEmailHash: ch as string | null }
 }
 
-export interface Challenge { challengeId: string; bookingId: number | null; emailHash: string; codeHash: string; expired: boolean }
+export interface Challenge { challengeId: string; emailHash: string; codeHash: string; expired: boolean }
 
 const codeHash = (secret: string, challengeId: string, code: string): string => hmacHex(secret, `dmk-code-v1.${challengeId}.${code}`)
 
-/** A challenge for a matched booking (with the code to email), or a decoy for no match that no code opens. */
-export function issueChallenge(secret: string, bookingId: number | null, emailHashValue: string, nowMs: number): { token: string; code: string; challengeId: string } {
+/**
+ * A challenge, real or decoy, with exactly the same readable fields: its ID, a keyed hash of the email, a keyed hash of
+ * the code and its expiry. No booking ID or match flag (T1 #164 RT01). Verify finds the booking again from the email.
+ * A decoy hashes a code nobody is told, so it can never verify.
+ */
+export function issueChallenge(secret: string, matched: boolean, emailHashValue: string, nowMs: number): { token: string; code: string; challengeId: string } {
   const challengeId = newId()
   const code = newCode()
-  // The decoy hashes a code nobody is told, so it has the same shape as a real challenge and can never verify.
-  const h = codeHash(secret, challengeId, bookingId === null ? `decoy.${newId()}` : code)
-  return { challengeId, code, token: seal(secret, CHALLENGE_PURPOSE, { c: challengeId, b: bookingId, e: emailHashValue, h, exp: nowMs + CHALLENGE_LIFETIME_MS }) }
+  const h = codeHash(secret, challengeId, matched ? code : `decoy.${newId()}`)
+  return { challengeId, code, token: seal(secret, CHALLENGE_PURPOSE, { c: challengeId, e: emailHashValue, h, exp: nowMs + CHALLENGE_LIFETIME_MS }) }
 }
 
 /** The signed challenge, with `expired` set rather than refused, so the guest is told it expired and not that it is wrong. */
 export function readChallenge(secret: string, token: string | null, nowMs: number): Challenge | null {
   const p = unseal(secret, CHALLENGE_PURPOSE, token, 0)
   if (!p) return null
-  const { c, b, e, h, exp } = p
+  const { c, e, h, exp } = p
   if (typeof c !== 'string' || typeof e !== 'string' || typeof h !== 'string' || typeof exp !== 'number') return null
-  if (b !== null && (typeof b !== 'number' || !Number.isSafeInteger(b))) return null
-  return { challengeId: c, bookingId: b as number | null, emailHash: e, codeHash: h, expired: exp <= nowMs }
+  return { challengeId: c, emailHash: e, codeHash: h, expired: exp <= nowMs }
 }
 
 export function codeMatches(secret: string, ch: Challenge, supplied: unknown): boolean {

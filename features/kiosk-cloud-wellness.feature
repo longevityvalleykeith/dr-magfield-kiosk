@@ -38,9 +38,9 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     Examples:
       | location | service | date       | status    | owner               | reason             |
       | 7        | 13      | 2026-10-20 | approved  | guest@example.com   | WRONG_OUTLET       |
-      | 6        | 13      | 2026-10-19 | approved  | guest@example.com   | NOT_TODAY          |
+      | 6        | 13      | 2026-10-19 | approved  | guest@example.com   | BOOKING_NOT_FOUND  |
       | 6        | 13      | 2026-10-20 | cancelled | guest@example.com   | BOOKING_NOT_ACTIVE |
-      | 6        | 14      | 2026-10-20 | approved  | someone@example.com | EMAIL_MISMATCH     |
+      | 6        | 14      | 2026-10-20 | approved  | someone@example.com | BOOKING_NOT_FOUND  |
 
   Scenario: K-04 An unknown booking number is refused the same way as a mismatch
     When the guest confirms booking 999 with "guest@example.com"
@@ -349,11 +349,12 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest asks for a code with "guest@example.com"
     Then no further code email was sent
 
-  Scenario: K-39 When Calendesk's booking list leaves out customer emails, the kiosk reads each KRPM booking to match
+  Scenario: K-39 A list without customer emails cannot authorize mail or unrelated detail reads
     Given Calendesk lists bookings without customer emails
     And Calendesk has booking 512 at location 7 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
     When the guest asks for a code with "guest@example.com"
-    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+    Then no code email was sent
+    And no Calendesk booking was read in full
     And booking 512 at another outlet was never read in full
 
   Scenario: K-40 Matching by email counts only today's active KRPM bookings
@@ -378,3 +379,45 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest asks for a code with "guest@example.com"
     And the guest enters the emailed code
     Then the consent text says the check is for the person who received the code
+
+  # No-store cures (Main REFUTE + Astra AMEND/HOLD of 340d1bbb, T1 #164; booking 21 trace 10-19). Astra's RT01–RT06
+  # run unchanged in tests/astra-rt*.test.mjs. The emailed code proves the inbox, not the person.
+
+  Scenario: K-43 A booking whose list row carries no location is still found by reading it in full
+    Given Calendesk lists bookings without their location
+    When the guest asks for a code with "guest@example.com"
+    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+
+  Scenario: K-44 A booking number sent with the lookup is ignored: only the typed email's own bookings count
+    Given Calendesk has booking 502 at location 6 for service 13 on "2026-10-20" with status "approved" for "someone@example.com" and employee 12
+    When a lookup names booking 502 with "guest@example.com"
+    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+    And booking 502 at another outlet was never read in full
+
+  Scenario: K-45 A lookup takes the same time whether or not the email has a booking today
+    When the guest asks for a code with "guest@example.com"
+    And the guest asks for a code with "nobody@example.com"
+    Then both lookups were held to the same reply time
+
+  Scenario: K-46 A code email the mail provider refuses still answers "code sent", like any other lookup
+    Given the mail provider refuses messages
+    When the guest asks for a code with "guest@example.com"
+    Then the kiosk shows the "code" screen
+    And the reply has the same shape as the reply for "nobody@example.com"
+
+  Scenario: K-47 Lookups close together read today's Calendesk list once, and the list's shape is logged as field names only
+    When the guest asks for a code with "nobody@example.com"
+    And the guest asks for a code with "guest@example.com"
+    Then Calendesk's booking list was read 1 time
+    And the booking list shape was logged with field names and no values
+
+  Scenario: K-48 A check that never reached FacePhys doesn't use up the booking's two checks
+    Given the guest already completed 1 checks for booking 501 today
+    And FacePhys presigns uploads to "uploads.evil.example"
+    And the guest confirmed booking 501 with "guest@example.com"
+    And the guest agreed to processing and email delivery
+    When the guest starts the scan
+    Then the kiosk shows the "failed" screen
+    When FacePhys presigns uploads to its own storage again
+    And the guest completes another check for booking 501
+    Then the kiosk shows the "result" screen

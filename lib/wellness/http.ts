@@ -38,6 +38,8 @@ export interface Deps {
   log: (event: string, fields: Record<string, unknown>) => void
   /** The in-process brakes. Production shares one set per instance; each test scenario brings its own. */
   brakes?: Brakes
+  /** Holds a lookup's reply to the fixed reply time. Tests record it instead of sleeping. */
+  wait?: (ms: number) => Promise<void>
 }
 
 const brakesOf = (deps: Deps): Brakes => deps.brakes ?? liveBrakes
@@ -113,50 +115,60 @@ function clientOf(req: Request): string {
 /** One booking's day at this outlet: the key of its per-day check cap. */
 const bookingDayKey = (config: WellnessConfig, bookingId: number, now: Date): string => `${bookingId}:${localDay(now, config.outlet.timeZone)}`
 
-function parseBookingId(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isSafeInteger(v) && v > 0) return v
-  if (typeof v === 'string' && /^\d{1,12}$/.test(v.trim())) return Number(v.trim())
-  return null
-}
+
+/** Every lookup answers after the same time, matched or not, so its timing says nothing about who is booked. */
+export const LOOKUP_REPLY_MS = 2_500
+const DAY_LIST_TTL_MS = 30_000
 
 /**
- * The booking's own email (Calendesk's address), from a booking number when one is given, or else from today's
- * bookings at this outlet. Earliest start wins. A list row without an email is read in full, at most 25 of them, in parallel.
+ * The typed email's booking today at this outlet. Earliest start wins.
+ * - Today's list (day filters only, as Foundry's production reader calls it) is kept 30 s per instance.
+ * - Active rows with the typed email are candidates only. Each distinct ID is read in full, at most 25, in parallel.
+ *   Only the fresh detail can authorize an email. A list location cannot authorize or reject a candidate.
+ * - The refusal keeps the reasons of the typed email's own rows, so a miss is self-diagnosing.
  */
-async function findBooking(config: WellnessConfig, bookingId: number | null, email: string, now: Date, fetchImpl: typeof fetch): Promise<{ kind: 'match'; booking: BookingFacts } | { kind: 'none'; reasons: MatchReason[]; booking: BookingFacts | null } | { kind: 'unavailable' }> {
+async function findBooking(config: WellnessConfig, email: string, now: Date, deps: Deps): Promise<{ kind: 'match'; booking: BookingFacts } | { kind: 'none'; reasons: MatchReason[]; booking: BookingFacts | null } | { kind: 'unavailable' }> {
   const check = (b: BookingFacts) => matchBooking({ booking: b, typedEmail: email, outlet: config.outlet, roster: config.roster, now })
-  if (bookingId !== null) {
-    const read = await readBooking(config.calendesk!, bookingId, fetchImpl)
-    if (!read.ok) return read.reason === 'BOOKING_UNAVAILABLE' ? { kind: 'unavailable' } : { kind: 'none', reasons: [read.reason], booking: null }
-    const m = check(read.booking)
-    return m.ok ? { kind: 'match', booking: read.booking } : { kind: 'none', reasons: m.reasons, booking: read.booking }
+  const day = localDay(now, config.outlet.timeZone)
+  const brakes = brakesOf(deps)
+  const fresh = (): Promise<BookingFacts[] | null> => listDayBookings(config.calendesk!, day, deps.fetch, (n, keys) => deps.log('booking_list_shape', { rows: n, keys }))
+  const cached = brakes.dayList && brakes.dayList.day === day && now.getTime() - brakes.dayList.at < DAY_LIST_TTL_MS ? (brakes.dayList.rows as BookingFacts[]) : null
+  // A cached list that can't place this email may predate the booking (made seconds ago), so it is read again.
+  const usable = cached && cached.some((b) => b.customerEmail === email) ? cached : null
+  const rows = usable ?? await fresh()
+  if (rows === null) return { kind: 'unavailable' }
+  if (!usable) brakes.dayList = { day, at: now.getTime(), rows }
+  const byStart = [...rows].sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)))
+  const mine = byStart.filter((b) => b.customerEmail === email)
+  const candidates = new Map<number, BookingFacts>()
+  for (const row of mine) {
+    if ((row.status === 'approved' || row.status === 'done') && !candidates.has(row.id)) candidates.set(row.id, row)
   }
-  const day = await listDayBookings(config.calendesk!, localDay(now, config.outlet.timeZone), fetchImpl)
-  if (day === null) return { kind: 'unavailable' }
-  const here = day.filter((b) => b.locationId === config.outlet.locationId).sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)))
-  for (const row of here.filter((b) => b.customerEmail !== null)) if (check(row).ok) return { kind: 'match', booking: row }
-  // In parallel, so the worst case stays inside the route's time limit: list ≤ 3 × 4 s, details 4 s, code email 4 s.
-  const reads = await Promise.all(here.filter((b) => b.customerEmail === null).slice(0, 25).map((row) => readBooking(config.calendesk!, row.id, fetchImpl)))
+  if (candidates.size > 25) return { kind: 'unavailable' }
+  const reads = await Promise.all(Array.from(candidates.keys()).map((id) => readBooking(config.calendesk!, id, deps.fetch)))
   if (reads.some((r) => !r.ok && r.reason === 'BOOKING_UNAVAILABLE')) return { kind: 'unavailable' }
-  for (const r of reads) if (r.ok && check(r.booking).ok) return { kind: 'match', booking: r.booking }
-  return { kind: 'none', reasons: ['BOOKING_NOT_FOUND'], booking: null }
+  const full = reads.flatMap((r) => (r.ok ? [r.booking] : []))
+  for (const b of full) if (check(b).ok) return { kind: 'match', booking: b }
+  const seen = [...full, ...mine.filter((b) => b.status !== 'approved' && b.status !== 'done')]
+  if (seen.length === 0) return { kind: 'none', reasons: ['BOOKING_NOT_FOUND'], booking: null }
+  const first = check(seen[0])
+  return { kind: 'none', reasons: first.ok ? ['BOOKING_NOT_FOUND'] : first.reasons, booking: seen[0] }
 }
 
 /**
- * Step 1 of 2. The guest types their email (a booking number is optional). If it matches an active booking here today,
- * a 6-digit code goes to the booking's own inbox. Matched or not, the reply is the same `code_sent` with a challenge,
- * so the page can't be used to learn who is booked. The code proves control of that inbox, not who the person is.
+ * Step 1 of 2. The guest types their email; any booking number in the request is ignored (T1 #164 P2-3). If the email
+ * has an active booking here today, a 6-digit code goes to the booking's own inbox. Every lookup — matched, unmatched,
+ * capped or with a refused email — answers the same `code_sent` after the same time (RT01). The code proves control of
+ * that inbox, not who the person is.
  */
 export async function handleBooking(req: Request, deps: Deps): Promise<Response> {
   const g = gate(req, deps)
   if (g instanceof Response) return g
   const { config, secret } = g
-  let input: { bookingId?: unknown; email?: unknown }
+  let input: { email?: unknown }
   try { input = (await req.json()) as typeof input } catch { return refuse(400, 'BOOKING_INPUT_INVALID') }
-  const hasId = input.bookingId !== undefined && input.bookingId !== null && input.bookingId !== ''
-  const bookingId = hasId ? parseBookingId(input.bookingId) : null
   const email = typeof input.email === 'string' ? normalizeEmail(input.email) : ''
-  if ((hasId && bookingId === null) || !isEmail(email)) return refuse(400, 'BOOKING_INPUT_INVALID')
+  if (!isEmail(email)) return refuse(400, 'BOOKING_INPUT_INVALID')
 
   const client = clientOf(req)
   if (!brakesOf(deps).lookupBudgetLeft(client, deps.now().getTime())) {
@@ -164,36 +176,33 @@ export async function handleBooking(req: Request, deps: Deps): Promise<Response>
     return refuse(429, 'TOO_MANY_LOOKUPS')
   }
   const now = deps.now()
-  const found = await findBooking(config, bookingId, email, now, deps.fetch)
+  const started = now.getTime()
+  const found = await findBooking(config, email, now, deps)
   if (found.kind === 'unavailable') {
     deps.log('booking_unavailable', {})
     return refuse(503, 'BOOKING_UNAVAILABLE')
   }
-  const sent = (token: string): Response => json(200, { status: 'code_sent', challengeToken: token, maskedEmail: mask(email) })
+  let challenge = issueChallenge(secret, false, emailHash(secret, email), now.getTime())
   if (found.kind === 'none') {
     // Numeric booking metadata only, so a refusal is self-diagnosing; never an email, a name or the booking payload.
     const b = found.booking
     deps.log('booking_refused', { reasons: found.reasons, locationId: b?.locationId ?? null, serviceLocationId: b?.serviceLocationId ?? null, serviceId: b?.serviceId ?? null })
     brakesOf(deps).noteRefusedLookup(client, now.getTime())
-    return sent(issueChallenge(secret, null, emailHash(secret, email), now.getTime()).token)
-  }
-  const booking = found.booking
-  const challenge = issueChallenge(secret, booking.id, emailHash(secret, email), now.getTime())
-  if (!brakesOf(deps).takeCode(bookingDayKey(config, booking.id, now))) {
+  } else if (!brakesOf(deps).takeCode(bookingDayKey(config, found.booking.id, now))) {
     deps.log('code_capped', {})
-    return sent(issueChallenge(secret, null, emailHash(secret, email), now.getTime()).token)
+  } else {
+    challenge = issueChallenge(secret, true, emailHash(secret, email), now.getTime())
+    // To the address Calendesk holds for the booking, which the typed email had to equal.
+    const delivery = await sendEmail(config.mail!, { to: found.booking.customerEmail!, cc: null, ...composeCodeEmail(challenge.code, config.outlet.name) }, `code-${challenge.challengeId}`, deps.fetch)
+    deps.log(delivery === 'sent' ? 'code_sent' : 'code_mail_failed', {})
   }
-  // To the address Calendesk holds for the booking, which the typed email had to equal.
-  const delivery = await sendEmail(config.mail!, { to: booking.customerEmail!, cc: null, ...composeCodeEmail(challenge.code, config.outlet.name) }, `code-${challenge.challengeId}`, deps.fetch)
-  if (delivery === 'failed') {
-    deps.log('code_mail_failed', {})
-    return refuse(503, 'CODE_UNAVAILABLE')
-  }
-  deps.log('code_sent', {})
-  return sent(challenge.token)
+  await (deps.wait ?? sleep)(Math.max(0, LOOKUP_REPLY_MS - (deps.now().getTime() - started)))
+  return json(200, { status: 'code_sent', challengeToken: challenge.token, maskedEmail: mask(email) })
 }
 
-/** Step 2 of 2. The emailed code opens one attempt: the booking is re-read and re-matched, then the check proceeds as before. */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Step 2 of 2. The emailed code opens one attempt: the booking is found again from the email and re-matched. */
 export async function handleVerify(req: Request, deps: Deps): Promise<Response> {
   const g = gate(req, deps)
   if (g instanceof Response) return g
@@ -207,27 +216,30 @@ export async function handleVerify(req: Request, deps: Deps): Promise<Response> 
   if (ch.expired) return refuse(400, 'CODE_EXPIRED')
   const brakes = brakesOf(deps)
   if (brakes.codeLocked(ch.challengeId)) return refuse(429, 'CODE_LOCKED')
-  if (ch.bookingId === null || !codeMatches(secret, ch, input.code)) {
+  if (!codeMatches(secret, ch, input.code)) {
     const locked = brakes.noteWrongCode(ch.challengeId)
     deps.log('code_wrong', { locked })
     return refuse(locked ? 429 : 400, locked ? 'CODE_LOCKED' : 'CODE_WRONG')
   }
+  // Held before the read so a parallel replay can't use it too; released if Calendesk fails, so it isn't burnt (RT05).
   brakes.noteCodeUsed(ch.challengeId)
-
-  const read = await readBooking(config.calendesk!, ch.bookingId, deps.fetch)
-  if (!read.ok) return read.reason === 'BOOKING_NOT_FOUND' ? refuse(409, 'BOOKING_CHANGED') : refuse(503, 'BOOKING_UNAVAILABLE')
-  const m = matchBooking({ booking: read.booking, typedEmail: email, outlet: config.outlet, roster: config.roster, now })
-  if (!m.ok) {
-    deps.log('booking_changed', { reasons: m.reasons })
+  const found = await findBooking(config, email, now, deps)
+  if (found.kind === 'unavailable') {
+    brakes.releaseCode(ch.challengeId)
+    return refuse(503, 'BOOKING_UNAVAILABLE')
+  }
+  if (found.kind === 'none') {
+    deps.log('booking_changed', { reasons: found.reasons })
     return refuse(409, 'BOOKING_CHANGED')
   }
-  if (!brakes.bookingChecksLeft(bookingDayKey(config, ch.bookingId, now))) {
+  const booking = found.booking
+  if (!brakes.bookingChecksLeft(bookingDayKey(config, booking.id, now))) {
     deps.log('booking_already_checked', {})
     return refuse(409, 'BOOKING_ALREADY_CHECKED')
   }
-  const care = await resolveCare(config, read.booking, deps.fetch)
+  const care = await resolveCare(config, booking, deps.fetch)
   const { token } = issueAttempt(secret, {
-    bookingId: ch.bookingId, emailHash: emailHash(secret, email),
+    bookingId: booking.id, emailHash: emailHash(secret, email),
     careEmployeeId: care?.calendeskEmployeeId ?? null,
     // Binds the exact CC address shown: if the roster address changes, the CC is dropped, never re-pointed.
     careEmailHash: care ? careEmailHash(secret, care.email) : null,
@@ -284,10 +296,13 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   // unless same-key retry is switched on. A retry after a failed presign or upload is safe, because nothing was charged.
   if (!config.sameKeyRetry && brakesOf(deps).wasDispatched(attempt.attemptId)) return refuse(409, 'ATTEMPT_ALREADY_SUBMITTED')
   const dayKey = bookingDayKey(config, attempt.bookingId, now)
-  if (!brakesOf(deps).wasDispatched(attempt.attemptId) && !brakesOf(deps).bookingChecksLeft(dayKey)) return refuse(409, 'BOOKING_ALREADY_CHECKED')
+  // An unknown outcome holds the booking: no fresh key is dispatched until staff reconcile it (RT04).
+  if (brakesOf(deps).bookingHeld(dayKey) && !brakesOf(deps).wasDispatched(attempt.attemptId)) return refuse(409, 'CHECK_PENDING')
+  // The slot is reserved before any await, so concurrent attempts can't all pass the cap (RT03).
+  if (!brakesOf(deps).reserveCheck(dayKey, attempt.attemptId)) return refuse(409, 'BOOKING_ALREADY_CHECKED')
   // Open mode has no device identity, so each booking gets its own bucket: one guest never uses up another's.
   const bucket = deviceId === 'open' ? `open:${attempt.bookingId}` : deviceId
-  if (!brakesOf(deps).allowSubmission(bucket, attempt.attemptId, now.getTime())) return refuse(429, 'TOO_MANY_SCANS')
+  if (!brakesOf(deps).allowSubmission(bucket, attempt.attemptId, now.getTime())) { brakesOf(deps).releaseCheck(dayKey, attempt.attemptId); return refuse(429, 'TOO_MANY_SCANS') }
 
   const booking = read.booking
   const record = (outcome: Outcome, delivery: Delivery): Promise<void> => writeRecord(deps, config, secret, deps.now().getTime() - started <= RECORD_MAIL_DEADLINE_MS, {
@@ -297,8 +312,9 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
   })
 
   const submission = await submitVideo(config.facephys!, { video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}` }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
-  if (submission.kind !== 'not_submitted') brakesOf(deps).markDispatched(attempt.attemptId, dayKey)
+  if (submission.kind !== 'not_submitted') brakesOf(deps).markDispatched(attempt.attemptId)
   if (submission.kind === 'not_submitted') {
+    brakesOf(deps).releaseCheck(dayKey, attempt.attemptId)
     await record('not_submitted', 'not_attempted')
     return json(502, { status: 'failed', code: submission.code, retryable: true })
   }
@@ -308,6 +324,7 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
     return json(502, { status: 'failed', code: submission.code, retryable: false })
   }
   if (submission.kind === 'unknown_outcome') {
+    brakesOf(deps).holdBooking(dayKey)
     await record('unknown_outcome', 'not_attempted')
     // The reference locates the consent record (attemptId) for staff reconciliation, including after a reload.
     return json(202, { status: 'unknown_outcome', retryable: config.sameKeyRetry, reference: attempt.attemptId.slice(0, 8) })

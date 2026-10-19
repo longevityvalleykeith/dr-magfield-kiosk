@@ -72,6 +72,7 @@ export const MESSAGES: Record<string, string> = {
   CODE_LOCKED: 'Too many wrong codes. Please start again to get a new code.',
   CODE_EXPIRED: 'That code has expired. Please start again to get a new code.',
   CODE_UNAVAILABLE: 'We couldn’t send the code just now. Your visit continues as normal.',
+  CHECK_PENDING: 'Your earlier check is still being confirmed. Please ask the CARE team before starting another.',
   TOO_MANY_LOOKUPS: 'Too many tries just now. Please wait a few minutes or ask the CARE team. Your visit continues as normal.',
   BOOKING_ALREADY_CHECKED: 'This booking has already had its wellness check today. Your visit continues as normal.',
   FAILED: 'The wellness check couldn’t be completed and no results were sent. Your visit continues as normal.',
@@ -87,6 +88,8 @@ export class KioskController {
   scanSeconds: number
   epoch: number
   clip: Blob | null
+  /** The camera permission prompt is open: the stream may still arrive, so hiding the page must stop it. */
+  opening: boolean
   listeners: Set<(s: KioskState) => void>
 
   constructor(deps: { api: KioskApi; media: MediaPort; scanSeconds: number }) {
@@ -96,6 +99,7 @@ export class KioskController {
     this.state = initialState()
     this.epoch = 0
     this.clip = null
+    this.opening = false
     this.listeners = new Set()
   }
 
@@ -162,7 +166,7 @@ export class KioskController {
 
   /** The page was hidden. Reading the code in the mail app keeps the check; a hidden page never keeps the camera on. */
   onHidden(): void {
-    if (this.media.isOpen() || this.state.screen === 'camera' || this.state.screen === 'recording') this.reset()
+    if (this.opening || this.media.isOpen() || this.state.screen === 'camera' || this.state.screen === 'recording') this.reset()
   }
 
   setConsent(field: keyof Consent, value: boolean): void {
@@ -178,11 +182,14 @@ export class KioskController {
     if (!this.media.supported()) { this.set({ screen: 'unsupported', errorCode: 'VIDEO_UNSUPPORTED', message: MESSAGES.VIDEO_UNSUPPORTED }); return }
     const epoch = this.epoch
     this.set({ busy: true, errorCode: null, message: null })
+    this.opening = true
     try { await this.media.open() } catch {
+      this.opening = false
       this.media.close()
       if (epoch === this.epoch) this.set({ busy: false, screen: 'failed', errorCode: 'CAMERA_UNAVAILABLE', message: MESSAGES.CAMERA_UNAVAILABLE })
       return
     }
+    this.opening = false
     if (epoch !== this.epoch) { this.media.close(); return }
     this.set({ busy: false, screen: 'camera' })
   }

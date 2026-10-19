@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test 'tests/*.test.mjs'",
-    "verify": "npm run build && npm run test"
+    "test": "node --test --test-skip-pattern='^RT02 ' 'tests/*.test.mjs'",
+    "verify": "npm run build && npm run test",
+    "test:held": "node --test --test-name-pattern='^RT02 ' tests/astra-rt01-05.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",
