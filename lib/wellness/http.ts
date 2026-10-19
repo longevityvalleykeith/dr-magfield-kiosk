@@ -145,7 +145,7 @@ async function findBooking(config: WellnessConfig, email: string, now: Date, dep
     if ((row.status === 'approved' || row.status === 'done') && !candidates.has(row.id)) candidates.set(row.id, row)
   }
   if (candidates.size > 25) return { kind: 'unavailable' }
-  const reads = await Promise.all([...candidates.keys()].map((id) => readBooking(config.calendesk!, id, deps.fetch)))
+  const reads = await Promise.all(Array.from(candidates.keys()).map((id) => readBooking(config.calendesk!, id, deps.fetch)))
   if (reads.some((r) => !r.ok && r.reason === 'BOOKING_UNAVAILABLE')) return { kind: 'unavailable' }
   const full = reads.flatMap((r) => (r.ok ? [r.booking] : []))
   for (const b of full) if (check(b).ok) return { kind: 'match', booking: b }
