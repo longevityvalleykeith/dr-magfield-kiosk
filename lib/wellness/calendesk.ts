@@ -6,6 +6,7 @@
  * email, and `control` (a cancel credential), phones, names and free text are dropped on parse.
  */
 import type { WellnessConfig } from './config.ts'
+import { keyPaths } from './result.ts'
 
 /** The booking's own Calendesk employee, read only to resolve the guest's optional CC. Never logged or recorded. */
 export interface EmployeeFacts { id: number; name: string | null; email: string | null; status: string | null }
@@ -115,8 +116,9 @@ export async function calendeskReachable(cfg: NonNullable<WellnessConfig['calend
  * day filters only, exactly as Foundry's production reader calls it. Status and email are matched here, on the server,
  * so the email never appears in a URL.
  */
-export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk']>, day: string, fetchImpl: typeof fetch): Promise<BookingFacts[] | null> {
+export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk']>, day: string, fetchImpl: typeof fetch, onShape: (rows: number, keys: string[]) => void = () => undefined): Promise<BookingFacts[] | null> {
   const rows: BookingFacts[] = []
+  let shaped = false
   for (let page = 1; page <= 3; page++) {
     const q = new URLSearchParams({ booking_date_from: day, booking_date_to: day, limit: '100', page: String(page) })
     let body: unknown
@@ -129,6 +131,8 @@ export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk
     } catch { return null }
     const top = obj(body)
     if (!top || !Array.isArray(top.data)) return null
+    // Field names only (never values), so the list's real shape can be calibrated from the logs (booking 21, 10-19).
+    if (!shaped) { shaped = true; onShape(top.data.length, top.data.length > 0 ? keyPaths(top.data[0]).slice(0, 60) : []) }
     for (const raw of top.data) { const b = parseBooking(raw); if (b) rows.push(b) }
     const last = int(top.last_page)
     if (last === null || page >= last) break

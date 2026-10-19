@@ -158,7 +158,7 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
 
         {s.screen === 'code' && s.challenge && (<form onSubmit={(e) => { e.preventDefault(); void c.submitCode(code) }}>
           <h1 className={styles.title}>Enter your code</h1>
-          <p className={styles.lead}>If {s.challenge.maskedEmail} has a booking at {outletName} today, a 6-digit code is on its way. It works for 10 minutes. You can switch to your email app and come back.</p>
+          <p className={styles.lead}>If {s.challenge.maskedEmail} has a booking at {outletName} today, a 6-digit code is on its way. It works for 10 minutes. You can switch to your email app and come back. No email after a few minutes? Check it’s the address on today’s booking, or ask the CARE team.</p>
           <label className={styles.field}>6-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required /></label>
           {s.message && <p className={styles.error} role="alert">{s.message}</p>}
           <div className={styles.row}>

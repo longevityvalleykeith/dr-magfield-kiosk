@@ -9,7 +9,10 @@
  *   Counted when the process request first goes out for an attempt.
  * - Booking lookups: at most 60 Calendesk reads a minute, and at most 10 refused lookups per client
  *   in 10 minutes. Both are checked before Calendesk is read, so LV's shared tenant is protected.
- * - One-time codes: at most 3 emailed per booking a day; 5 wrong entries lock a code; a code opens one attempt.
+ * - One-time codes: at most 3 emailed per booking a day; 5 wrong entries lock a code; a code opens one attempt. A code
+ *   is held while its booking is read and released if that read fails, so a Calendesk hiccup never burns it.
+ * - The per-booking slot is reserved before the vendor call and released only if nothing was submitted; an unknown
+ *   outcome holds the booking until it is reconciled. All of this is per instance (a shared store is the next unit).
  *
  * The route handlers take a Brakes through Deps, so every test scenario starts with fresh counts.
  */
@@ -34,15 +37,37 @@ export class Brakes {
   codesSent = new Map<string, number>()
   codeFailures = new Map<string, number>()
   codesUsed = new Set<string>()
+  reserved = new Set<string>()
+  pending = new Set<string>()
 
   /** An attempt whose process request was sent. Unless same-key retry is on, it is never sent again (stop and reconcile). */
-  markDispatched(attemptId: string, bookingDayKey: string): void {
-    if (this.dispatched.has(attemptId)) return
+  markDispatched(attemptId: string): void {
     if (this.dispatched.size > 5000) this.dispatched.clear()
     this.dispatched.add(attemptId)
+  }
+
+  /**
+   * Takes this attempt's slot in the booking-day cap synchronously, before any await, so concurrent attempts can't all
+   * pass the check. True if the attempt already holds a slot or one was free.
+   */
+  reserveCheck(bookingDayKey: string, attemptId: string): boolean {
+    if (this.reserved.has(attemptId)) return true
+    if (!this.bookingChecksLeft(bookingDayKey)) return false
     if (this.bookingChecks.size > 5000) this.bookingChecks.clear()
     this.bookingChecks.set(bookingDayKey, (this.bookingChecks.get(bookingDayKey) ?? 0) + 1)
+    this.reserved.add(attemptId)
+    return true
   }
+
+  /** Nothing reached the vendor (presign or upload failed), so the slot is free again. */
+  releaseCheck(bookingDayKey: string, attemptId: string): void {
+    if (!this.reserved.delete(attemptId)) return
+    this.bookingChecks.set(bookingDayKey, Math.max(0, (this.bookingChecks.get(bookingDayKey) ?? 1) - 1))
+  }
+
+  /** An unknown outcome: no further dispatch for this booking-day until staff reconcile it. */
+  holdBooking(bookingDayKey: string): void { this.pending.add(bookingDayKey) }
+  bookingHeld(bookingDayKey: string): boolean { return this.pending.has(bookingDayKey) }
   /** False once this booking has had its charged checks today (key = booking ID + outlet-local day). */
   bookingChecksLeft(bookingDayKey: string): boolean { return (this.bookingChecks.get(bookingDayKey) ?? 0) < CHECKS_PER_BOOKING_PER_DAY }
   wasDispatched(attemptId: string): boolean { return this.dispatched.has(attemptId) }
@@ -111,6 +136,10 @@ export class Brakes {
   }
 
   noteCodeUsed(challengeId: string): void { if (this.codesUsed.size > 5000) this.codesUsed.clear(); this.codesUsed.add(challengeId) }
+  releaseCode(challengeId: string): void { this.codesUsed.delete(challengeId) }
+
+  /** Today's Calendesk list, kept for 30 s per instance, so lookups close together cost one list read. */
+  dayList: { day: string; at: number; rows: unknown } | null = null
 }
 
 /** The one set of counts a production instance keeps. */
