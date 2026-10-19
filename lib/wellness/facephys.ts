@@ -8,9 +8,9 @@
  * x-key-id + x-timestamp + x-signature, where the signature is Base64(HMAC-SHA256(secret, unix-seconds)).
  *
  * Process may consume tokens, so it carries confirmCharge, a stable idempotencyKey and the
- * video's SHA-256. The gateway replays a completed result for the same key and digest instead of
- * charging again (agent.md). So a lost response is reported as unknown, and is reconciled only by
- * retrying the SAME attempt; it is never retried under a fresh key.
+ * video's SHA-256. Vendor replay claims do not grant this kiosk permission to repeat a process call.
+ * A one-time durable authorization is required immediately before process. Lost/denied authorization
+ * never sends process; lost process responses remain unknown for separately authorized reconciliation.
  */
 import { hmacBase64 } from './crypto.ts'
 import type { WellnessConfig } from './config.ts'
@@ -33,27 +33,32 @@ export function normalizeUploadUrl(url: string): string {
 }
 
 /**
- * CLOUD-04: validate the upload origin. It must be https, unless the configured base URL is itself a loopback test
- * double. Its host must sit under cfg.uploadHosts: the pinned list, or by default FacePhys's own domain plus the known
- * object-storage providers. An empty list admits nothing. Returns the host, or null.
+ * CLOUD-04: the origin must be HTTPS with an exact configured hostname, no credentials or custom port.
+ * Configuration admission separately restricts that one pin to R2/S3/GCS. No suffix or loopback exception.
  */
 export function uploadHostAllowed(uploadUrl: string, cfg: Pick<FacePhys, 'baseUrl' | 'uploadHosts'>): string | null {
   let u: URL
   try { u = new URL(uploadUrl) } catch { return null }
-  const loopbackDouble = cfg.baseUrl.startsWith('http://127.0.0.1:') && u.protocol === 'http:' && u.hostname === '127.0.0.1'
-  if (u.protocol !== 'https:' && !loopbackDouble) return null
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return null
   const host = u.hostname.toLowerCase()
-  if (!cfg.uploadHosts.some((h) => host === h || host.endsWith(`.${h}`))) return null
+  if (cfg.uploadHosts.length !== 1 || host !== cfg.uploadHosts[0]) return null
   return host
 }
 
 export type Submission =
   | { kind: 'completed'; body: unknown }
   | { kind: 'refused'; code: 'VENDOR_AUTH' | 'VENDOR_REFUSED' | 'VENDOR_REJECTED_VIDEO'; httpStatus: number }
-  | { kind: 'not_submitted'; code: 'PRESIGN_FAILED' | 'UPLOAD_FAILED' }
+  | { kind: 'not_submitted'; code: 'PRESIGN_FAILED' | 'UPLOAD_FAILED' | 'VENDOR_AUTH' }
+  | { kind: 'authorization_unavailable' }
   | { kind: 'unknown_outcome' }
 
-export interface SubmitArgs { video: ArrayBuffer; videoSha256: string; idempotencyKey: string }
+export interface SubmitArgs {
+  video: ArrayBuffer
+  videoSha256: string
+  idempotencyKey: string
+  /** Exactly one durable preparing → dispatching grant, never an idempotent re-grant. */
+  authorizeProcess: () => Promise<boolean>
+}
 
 export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeof fetch, nowMs: () => number, onUploadHost: (host: string) => void = () => undefined): Promise<Submission> {
   // 1 · presign. It consumes no tokens. The signed uploadUrl is sensitive and never logged.
@@ -66,7 +71,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
       redirect: 'error',
       signal: AbortSignal.timeout(5_000),
     })
-    if (res.status === 401 || res.status === 403) return { kind: 'refused', code: 'VENDOR_AUTH', httpStatus: res.status }
+    if (res.status === 401 || res.status === 403) return { kind: 'not_submitted', code: 'VENDOR_AUTH' }
     if (!res.ok) return { kind: 'not_submitted', code: 'PRESIGN_FAILED' }
     const body = (await res.json()) as { uploadUrl?: unknown; objectKey?: unknown }
     if (typeof body.uploadUrl !== 'string' || typeof body.objectKey !== 'string' || !body.objectKey) return { kind: 'not_submitted', code: 'PRESIGN_FAILED' }
@@ -83,7 +88,11 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
     if (!put.ok) return { kind: 'not_submitted', code: 'UPLOAD_FAILED' }
   } catch { return { kind: 'not_submitted', code: 'UPLOAD_FAILED' } }
 
-  // 3 · process. It may consume tokens. Re-signed, because presign and upload can take a while.
+  // 3 · Durable barrier immediately before the charge-bearing call. Response loss is not a grant.
+  try {
+    if (!await a.authorizeProcess()) return { kind: 'authorization_unavailable' }
+  } catch { return { kind: 'authorization_unavailable' } }
+  // Re-signed, because presign and upload can take a while. There is no await between the grant and fetch.
   let res: Response
   try {
     res = await fetchImpl(`${cfg.baseUrl}/api/v3/video/process`, {
@@ -100,7 +109,7 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
   if (res.status === 401) return { kind: 'refused', code: 'VENDOR_AUTH', httpStatus: 401 }
   if (res.status === 403) return { kind: 'refused', code: 'VENDOR_REFUSED', httpStatus: 403 }
   if (res.status === 422) return { kind: 'refused', code: 'VENDOR_REJECTED_VIDEO', httpStatus: 422 }
-  // 202/409 (in progress) and 5xx: the vendor may hold the submission. Only a same-key retry reconciles it.
+  // 202/409 (in progress) and 5xx: the vendor may hold the submission. The kiosk cannot retry it.
   return { kind: 'unknown_outcome' }
 }
 

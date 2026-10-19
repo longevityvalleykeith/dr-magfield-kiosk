@@ -8,8 +8,9 @@
  *   never the address) and to the booking's CARE employee ID. The scan cannot swap any of them.
  *   Its attempt ID is the FacePhys idempotency key.
  * - **Code challenge** (10 minutes). It carries a keyed hash of the 6-digit code emailed to the booking's inbox, never the
- *   code itself, so LV stores nothing and the page can't read the code back. A real and a decoy challenge carry the
- *   same fields, and no booking ID.
+ *   code itself, so the page cannot read the code back. Shared durable state stores the opaque challenge ID,
+ *   keyed booking-day reference and claim/count metadata. A real and decoy challenge carry the same fields,
+ *   and no booking ID. The ready attempt UUID is durably consumed before its signed token is exposed.
  */
 import { hmacHex, newCode, newId, sameSecret, seal, unseal } from './crypto.ts'
 
