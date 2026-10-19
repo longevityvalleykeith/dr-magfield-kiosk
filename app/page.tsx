@@ -147,7 +147,7 @@ export default function StandeePage() {
 
         <section className={styles.doorway} aria-labelledby="doorway-heading">
           <h2 className={styles.doorwayHeading} id="doorway-heading">
-            Scan to open the lounge page
+            Scan for your wellness check
           </h2>
           <div className={styles.qrFrame}>
             {qr ? (
@@ -159,7 +159,7 @@ export default function StandeePage() {
           </div>
           <p className={styles.doorwayUrl}>{DOORWAY_URL}</p>
           <p className={styles.doorwayNote}>
-            This screen collects nothing. Scanning opens the lounge&rsquo;s own page on your phone.
+            This screen collects nothing. Scanning opens the optional wellness check on your own phone. You need today&rsquo;s booking and its email.
           </p>
         </section>
       </div>

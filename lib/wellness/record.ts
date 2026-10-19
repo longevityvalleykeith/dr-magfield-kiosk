@@ -7,9 +7,9 @@
  * Never in the record: video, readings, names, email addresses (only keyed recipient bindings),
  * raw booking payloads, signed URLs or secrets.
  *
- * Subject assurance is stated honestly. The guest typed the booking number and the booking's email
- * ("booking-detail knowledge"). That proves neither mailbox control nor that the scanned face is
- * the booking holder.
+ * Subject assurance is stated honestly. The guest entered the code emailed to the booking's inbox
+ * ("booking-inbox-code"). That proves control of that inbox, not that the scanned face is the
+ * booking holder: nothing remote can prove who a person is.
  *
  * Routing into Foundry's receipts is deferred. The record is one runtime log line, plus an email to
  * CONSENT_RECORD_TO when that is set. Its retention rule stays "unset" until Keith sets
@@ -35,7 +35,7 @@ export interface ConsentRecord {
   serviceId: number | null
   serviceTypeId: number | null
   careEmployeeId: number | null
-  subjectBinding: 'booking-detail-knowledge-v1'
+  subjectBinding: 'booking-inbox-code-v1'
   purpose: 'optional-wellness-indicators-cloud-v3'
   noticeVersion: string
   processingDecision: 'agreed'
@@ -82,7 +82,7 @@ export function consentRecord(secret: string, f: RecordInput): ConsentRecord {
     serviceTypeId: f.booking.serviceTypeId,
     // Booking context: kept even when the CC is declined. It is not a disclosure grant.
     careEmployeeId: f.booking.employeeId,
-    subjectBinding: 'booking-detail-knowledge-v1',
+    subjectBinding: 'booking-inbox-code-v1',
     purpose: 'optional-wellness-indicators-cloud-v3',
     noticeVersion: f.noticeVersion,
     processingDecision: 'agreed',

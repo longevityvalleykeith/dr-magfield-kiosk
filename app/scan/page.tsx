@@ -10,8 +10,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 }
 
-export default function ScanPage() {
+export default function ScanPage({ searchParams }: { searchParams?: { src?: string } }) {
   const config = readConfig(process.env)
+  // The standee QR carries ?src=qr. A count only: no address, device or person (it replaces EV-1's receipt for this QR).
+  if (searchParams?.src === 'qr') console.info(JSON.stringify({ scope: 'wellness', event: 'qr_open' }))
   // Only these three non-secret values cross into the client bundle.
   return <Kiosk ready={isReady(config)} scanSeconds={config.scanSeconds} outletName={config.outlet.name} />
 }

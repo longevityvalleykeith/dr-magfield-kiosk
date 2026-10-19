@@ -1,5 +1,5 @@
 /**
- * Two signed capabilities, both HMAC'd with KIOSK_COOKIE_SECRET:
+ * Three signed capabilities, all HMAC'd with KIOSK_COOKIE_SECRET:
  *
  * - **Device cookie** (`__Host-dmk-device`: HttpOnly, Secure, SameSite=Strict). Staff set it once
  *   per tablet at /scan/enroll. Without it, no booking is read and no scan is sent. It is never a
@@ -7,14 +7,19 @@
  * - **Attempt token** (15 minutes). It binds one booking match to one guest email (a keyed hash,
  *   never the address) and to the booking's CARE employee ID. The scan cannot swap any of them.
  *   Its attempt ID is the FacePhys idempotency key.
+ * - **Code challenge** (10 minutes). It carries a keyed hash of the 6-digit code emailed to the booking's inbox, never the
+ *   code itself, so LV stores nothing and the page can't read the code back. An unmatched email gets a challenge no
+ *   code can open, so the reply never reveals whether a booking exists.
  */
-import { hmacHex, newId, sameSecret, seal, unseal } from './crypto.ts'
+import { hmacHex, newCode, newId, sameSecret, seal, unseal } from './crypto.ts'
 
 export const DEVICE_COOKIE = '__Host-dmk-device'
 const DEVICE_PURPOSE = 'dmk-device-v1'
 const ATTEMPT_PURPOSE = 'dmk-attempt-v1'
 const DEVICE_LIFETIME_MS = 30 * 24 * 3600 * 1000
 const ATTEMPT_LIFETIME_MS = 15 * 60 * 1000
+const CHALLENGE_PURPOSE = 'dmk-challenge-v1'
+export const CHALLENGE_LIFETIME_MS = 10 * 60 * 1000
 
 export function issueDevice(secret: string, nowMs: number): { value: string; header: string } {
   const value = seal(secret, DEVICE_PURPOSE, { d: newId(), exp: nowMs + DEVICE_LIFETIME_MS })
@@ -57,4 +62,31 @@ export function readAttempt(secret: string, token: string | null, nowMs: number)
   if (c !== null && (typeof c !== 'number' || !Number.isSafeInteger(c))) return null
   if (ch !== null && typeof ch !== 'string') return null
   return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: c as number | null, careEmailHash: ch as string | null }
+}
+
+export interface Challenge { challengeId: string; bookingId: number | null; emailHash: string; codeHash: string; expired: boolean }
+
+const codeHash = (secret: string, challengeId: string, code: string): string => hmacHex(secret, `dmk-code-v1.${challengeId}.${code}`)
+
+/** A challenge for a matched booking (with the code to email), or a decoy for no match that no code opens. */
+export function issueChallenge(secret: string, bookingId: number | null, emailHashValue: string, nowMs: number): { token: string; code: string; challengeId: string } {
+  const challengeId = newId()
+  const code = newCode()
+  // The decoy hashes a code nobody is told, so it has the same shape as a real challenge and can never verify.
+  const h = codeHash(secret, challengeId, bookingId === null ? `decoy.${newId()}` : code)
+  return { challengeId, code, token: seal(secret, CHALLENGE_PURPOSE, { c: challengeId, b: bookingId, e: emailHashValue, h, exp: nowMs + CHALLENGE_LIFETIME_MS }) }
+}
+
+/** The signed challenge, with `expired` set rather than refused, so the guest is told it expired and not that it is wrong. */
+export function readChallenge(secret: string, token: string | null, nowMs: number): Challenge | null {
+  const p = unseal(secret, CHALLENGE_PURPOSE, token, 0)
+  if (!p) return null
+  const { c, b, e, h, exp } = p
+  if (typeof c !== 'string' || typeof e !== 'string' || typeof h !== 'string' || typeof exp !== 'number') return null
+  if (b !== null && (typeof b !== 'number' || !Number.isSafeInteger(b))) return null
+  return { challengeId: c, bookingId: b as number | null, emailHash: e, codeHash: h, expired: exp <= nowMs }
+}
+
+export function codeMatches(secret: string, ch: Challenge, supplied: unknown): boolean {
+  return typeof supplied === 'string' && /^\d{6}$/.test(supplied) && sameSecret(codeHash(secret, ch.challengeId, supplied), ch.codeHash)
 }

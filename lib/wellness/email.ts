@@ -48,6 +48,21 @@ export function composeResultEmail(i: ResultEmailInput): { subject: string; text
   return { subject: `Your ${i.outletName} wellness check`, text: lines.join('\n'), html }
 }
 
+/** The one-time code email: the code, how long it works, and that nothing happens without it. No reading, no booking detail. */
+export function composeCodeEmail(code: string, outletName: string): { subject: string; text: string; html: string } {
+  const lines = [
+    `Your ${outletName} wellness check code is ${code}.`,
+    '',
+    'Type it on the wellness check page. It works for 10 minutes, once.',
+    'If you didn’t ask for it, ignore this email: nothing happens without the code.',
+  ]
+  return {
+    subject: `${code} is your ${outletName} wellness check code`,
+    text: lines.join('\n'),
+    html: `<p>Your ${esc(outletName)} wellness check code is <strong style="font-size:1.4em;letter-spacing:.15em">${esc(code)}</strong>.</p><p>Type it on the wellness check page. It works for 10 minutes, once.</p><p style="color:#555">If you didn’t ask for it, ignore this email: nothing happens without the code.</p>`,
+  }
+}
+
 type Mail = NonNullable<WellnessConfig['mail']>
 
 export interface Outgoing { to: string; cc: string | null; subject: string; text: string; html: string }

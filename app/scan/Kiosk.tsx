@@ -8,7 +8,8 @@
  *   - getUserMedia (front camera, no audio) and MediaRecorder (video/mp4 only, which FacePhys needs);
  *   - fetch to the same-origin /api/wellness routes. The device cookie is HttpOnly, so this code
  *     never sees it.
- * The screen resets on inactivity, after a result, and when the tab is hidden.
+ * The screen resets on inactivity and after a result. It runs on the guest's own phone (Keith 10-19), so hiding the
+ * page (to read the emailed code) keeps the check; only a hidden page with the camera on resets.
  */
 import { useEffect, useRef, useState } from 'react'
 import { KioskController, MESSAGES } from '@/lib/wellness/controller.ts'
@@ -20,6 +21,8 @@ import styles from './kiosk.module.css'
 const MP4_TYPES = ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4']
 const IDLE_RESET_MS = 120_000
 const DONE_RESET_MS = 45_000
+/** The code step waits for an email, so it gets the code's own lifetime. */
+const CODE_RESET_MS = 10 * 60_000
 
 function pickType(): string | null {
   if (typeof MediaRecorder === 'undefined') return null
@@ -64,6 +67,10 @@ const fetchApi: KioskApi = {
     const r = await fetch('/api/wellness/booking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), credentials: 'same-origin', cache: 'no-store' })
     return { status: r.status, body: await r.json().catch(() => null) }
   },
+  async verify(input) {
+    const r = await fetch('/api/wellness/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), credentials: 'same-origin', cache: 'no-store' })
+    return { status: r.status, body: await r.json().catch(() => null) }
+  },
   async scan(input: ScanInput) {
     const fd = new FormData()
     fd.set('attemptToken', input.attemptToken)
@@ -84,27 +91,27 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
   if (ctl.current === null) ctl.current = new KioskController({ api: fetchApi, media: browserMedia(() => videoRef.current), scanSeconds })
   const [s, setS] = useState<KioskState>(ctl.current.state)
   const [lang, setLang] = useState<Lang>('en')
-  const [bookingId, setBookingId] = useState('')
   const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [touch, setTouch] = useState(0)
 
   useEffect(() => {
     const c = ctl.current!
     const off = c.subscribe(setS)
-    const hide = () => { if (document.visibilityState === 'hidden') c.reset() }
+    const hide = () => { if (document.visibilityState === 'hidden') c.onHidden() }
     document.addEventListener('visibilitychange', hide)
     return () => { off(); document.removeEventListener('visibilitychange', hide); c.reset() }
   }, [])
 
   // The next guest starts clean: inputs are cleared whenever the controller is back at welcome.
-  useEffect(() => { if (s.screen === 'welcome') { setBookingId(''); setEmail(''); setLang('en') } }, [s.screen])
+  useEffect(() => { if (s.screen === 'welcome') { setEmail(''); setCode(''); setLang('en') } }, [s.screen])
 
   // Inactivity and post-result resets.
   useEffect(() => {
     if (s.screen === 'welcome' || s.busy || s.screen === 'recording' || s.screen === 'processing') return
     const done = ['result', 'insufficient', 'unknown', 'failed', 'unsupported'].includes(s.screen)
-    const t = window.setTimeout(() => ctl.current!.reset(), done ? DONE_RESET_MS : IDLE_RESET_MS)
+    const t = window.setTimeout(() => ctl.current!.reset(), done ? DONE_RESET_MS : s.screen === 'code' ? CODE_RESET_MS : IDLE_RESET_MS)
     return () => window.clearTimeout(t)
   }, [s.screen, s.busy, touch])
 
@@ -131,21 +138,32 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
 
         {s.screen === 'welcome' && (<>
           <h1 className={styles.title}>{CONSENT_TEXT.en.title}</h1>
-          <p className={styles.lead}>A {scanSeconds}-second face scan estimates your heart rate, heart-rate variability and breathing rate. You need today’s booking and the email you booked with.</p>
+          <p className={styles.lead}>A {scanSeconds}-second face scan on your phone estimates your heart rate, heart-rate variability and breathing rate. You need today’s booking and the email you booked with.</p>
           <div className={styles.row}>
             <button className={styles.primary} onClick={() => c.start()}>Start</button>
             <button className={styles.ghost} onClick={() => c.decline()}>{CONSENT_TEXT.en.decline}</button>
           </div>
         </>)}
 
-        {s.screen === 'booking' && (<form onSubmit={(e) => { e.preventDefault(); void c.submitBooking(bookingId, email) }}>
-          <h1 className={styles.title}>Confirm your booking</h1>
-          <label className={styles.field}>Booking number<input inputMode="numeric" autoComplete="off" value={bookingId} onChange={(e) => setBookingId(e.target.value)} required /></label>
-          <label className={styles.field}>Email you booked with<input type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+        {s.screen === 'booking' && (<form onSubmit={(e) => { e.preventDefault(); void c.submitBooking('', email) }}>
+          <h1 className={styles.title}>Your booking email</h1>
+          <p className={styles.lead}>We’ll email a 6-digit code to the address on today’s booking.</p>
+          <label className={styles.field}>Email you booked with<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
           {s.message && <p className={styles.error} role="alert">{s.message}</p>}
           <div className={styles.row}>
-            <button className={styles.primary} type="submit" disabled={s.busy}>{s.busy ? 'Checking…' : 'Continue'}</button>
+            <button className={styles.primary} type="submit" disabled={s.busy}>{s.busy ? 'Checking…' : 'Email me a code'}</button>
             <button className={styles.ghost} type="button" onClick={() => c.cancel()}>Cancel</button>
+          </div>
+        </form>)}
+
+        {s.screen === 'code' && s.challenge && (<form onSubmit={(e) => { e.preventDefault(); void c.submitCode(code) }}>
+          <h1 className={styles.title}>Enter your code</h1>
+          <p className={styles.lead}>If {s.challenge.maskedEmail} has a booking at {outletName} today, a 6-digit code is on its way. It works for 10 minutes. You can switch to your email app and come back.</p>
+          <label className={styles.field}>6-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required /></label>
+          {s.message && <p className={styles.error} role="alert">{s.message}</p>}
+          <div className={styles.row}>
+            <button className={styles.primary} type="submit" disabled={s.busy || code.length !== 6}>{s.busy ? 'Checking…' : 'Continue'}</button>
+            <button className={styles.ghost} type="button" onClick={() => c.cancel()}>Start again</button>
           </div>
         </form>)}
 

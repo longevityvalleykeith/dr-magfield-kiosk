@@ -19,10 +19,12 @@ export type Env = Record<string, string | undefined>
 
 // ── EV-1 · the one doorway ───────────────────────────────────────────
 /**
- * The governed scan landing for KRPM. Every DR MAGfield QR — standee,
- * widget, film — decodes to this, so the scan lands on the record.
+ * The standee QR opens the wellness check on the guest's own phone (Keith 10-19: "Make it SIMPLE & SURPRISE ME…
+ * resolve [QR path can never reach the check]", then "go"). It supersedes the 09-02 EV-1 doorway and the 08-29 KD-F4
+ * ruling for this QR only: that doorway led to the PWA, so no guest could reach the check. `src=qr` lets /scan count
+ * QR opens as a number. LV's own doorway (app.longevityvalley.ai/scan/dr-magfield/krpm) is unchanged.
  */
-export const DOORWAY_URL_CANON = 'https://app.longevityvalley.ai/scan/dr-magfield/krpm'
+export const DOORWAY_URL_CANON = 'https://dr-magfield-kiosk-krpm.vercel.app/scan?src=qr'
 
 /**
  * The hosts a standee may point a phone at.

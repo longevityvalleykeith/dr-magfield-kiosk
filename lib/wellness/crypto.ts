@@ -1,12 +1,14 @@
 /**
  * Server-only primitives for the wellness check. Nothing here is imported by a client component.
  */
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 
 export const sha256Hex = (data: string | Uint8Array): string => createHash('sha256').update(data).digest('hex')
 export const hmacBase64 = (key: string, message: string): string => createHmac('sha256', key).update(message).digest('base64')
 export const hmacHex = (key: string, message: string): string => createHmac('sha256', key).update(message).digest('hex')
 export const newId = (): string => randomUUID()
+/** A uniformly random 6-digit one-time code. */
+export const newCode = (): string => String(randomInt(0, 1_000_000)).padStart(6, '0')
 
 /** Constant-time equality over digests, so neither length nor content leaks through timing. */
 export function sameSecret(a: string, b: string): boolean {

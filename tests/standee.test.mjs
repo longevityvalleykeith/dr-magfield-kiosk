@@ -20,8 +20,11 @@ import {
 } from '../lib/standee.ts'
 
 // ── EV-1 · one doorway ───────────────────────────────────────────────
-test('EV-1: the canon doorway is the governed scan landing', () => {
-  assert.equal(DOORWAY_URL_CANON, 'https://app.longevityvalley.ai/scan/dr-magfield/krpm')
+// Superseded 2026-10-19 for this QR only. Keith: "Make it SIMPLE & SURPRISE ME... resolve [QR path can never reach the check]",
+// then "go". The 09-02 EV-1 doorway (and the 08-29 KD-F4 ruling) led only to the PWA, so a guest could never reach the
+// wellness check. The QR now opens the check on the guest's own phone. LV's doorway itself is untouched (T1 #164).
+test('QR-1: the canon QR opens the wellness check on the guest\'s phone, marked as a QR open', () => {
+  assert.equal(DOORWAY_URL_CANON, 'https://dr-magfield-kiosk-krpm.vercel.app/scan?src=qr')
 })
 
 test('EV-1: an unset environment still yields the canon doorway', () => {

@@ -4,7 +4,7 @@ import { liveDeps } from '@/lib/wellness/live.ts'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const fetchCache = 'force-no-store'
-export const maxDuration = 20
+export const maxDuration = 30
 
 export function POST(request: Request): Promise<Response> {
   return handleBooking(request, liveDeps())

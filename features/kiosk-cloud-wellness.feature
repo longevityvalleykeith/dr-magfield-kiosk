@@ -309,3 +309,72 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest confirms booking 501 with "guest@example.com"
     Then the kiosk is refused with "TOO_MANY_LOOKUPS"
     And no further request reached Calendesk
+
+  # Phone-first, inbox key (Keith 10-19: "Make it SIMPLE & SURPRISE ME", then "go"). The standee QR opens this check on
+  # the guest's own phone. A 6-digit code emailed to the booking's inbox proves control of that inbox before consent.
+  # It does not prove who the person is, and the consent screen says so.
+
+  Scenario: K-34 On their own phone a guest needs only their email: a code goes to the booking's inbox, and entering it opens consent
+    When the guest asks for a code with "guest@example.com"
+    Then the kiosk shows the "code" screen
+    And a 6-digit code was emailed to "guest@example.com" and to no one else
+    And Calendesk's booking list was read with today's date filters only, as Foundry reads it in production
+    When the guest enters the emailed code
+    Then the kiosk shows the "consent" screen
+    When the same code is entered again
+    Then the reply is refused with "CODE_LOCKED"
+
+  Scenario: K-35 Knowing the email is not enough: wrong codes never open consent, and the fifth locks the code
+    When the guest asks for a code with "guest@example.com"
+    And the guest enters a wrong code 5 times
+    Then the kiosk is refused with "CODE_LOCKED"
+    When the guest enters the emailed code
+    Then the kiosk is refused with "CODE_LOCKED"
+    And the camera was never opened
+
+  Scenario: K-36 An email with no KRPM booking today gets the same reply as one that has, and no code is sent
+    When the guest asks for a code with "nobody@example.com"
+    Then the kiosk shows the "code" screen
+    And no code email was sent
+    And the reply has the same shape as the reply for "guest@example.com"
+
+  Scenario: K-37 A code expires after 10 minutes
+    When the guest asks for a code with "guest@example.com"
+    And 11 minutes pass
+    And the guest enters the emailed code
+    Then the kiosk is refused with "CODE_EXPIRED"
+
+  Scenario: K-38 At most 3 codes per booking a day
+    Given the guest asked for a code with "guest@example.com" 3 times
+    When the guest asks for a code with "guest@example.com"
+    Then no further code email was sent
+
+  Scenario: K-39 When Calendesk's booking list leaves out customer emails, the kiosk reads each KRPM booking to match
+    Given Calendesk lists bookings without customer emails
+    And Calendesk has booking 512 at location 7 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
+    When the guest asks for a code with "guest@example.com"
+    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+    And booking 512 at another outlet was never read in full
+
+  Scenario: K-40 Matching by email counts only today's active KRPM bookings
+    Given Calendesk has booking 510 at location 7 for service 13 on "2026-10-20" with status "approved" for "other@example.com" and employee 12
+    And Calendesk has booking 511 at location 6 for service 13 on "2026-10-19" with status "approved" for "other@example.com" and employee 12
+    When the guest asks for a code with "other@example.com"
+    Then no code email was sent
+    When the guest asks for a code with "guest@example.com"
+    Then a 6-digit code was emailed to "guest@example.com" and to no one else
+
+  Scenario: K-41 Leaving the page to read the code keeps the check; leaving with the camera on stops it
+    When the guest asks for a code with "guest@example.com"
+    And the phone hides the page
+    Then the kiosk shows the "code" screen
+    When the guest enters the emailed code
+    And the guest agreed to processing and email delivery
+    And the phone hides the page
+    Then the camera is closed
+    And the kiosk shows the "welcome" screen
+
+  Scenario: K-42 The consent screen says the code proves the inbox, not the person
+    When the guest asks for a code with "guest@example.com"
+    And the guest enters the emailed code
+    Then the consent text says the check is for the person who received the code
