@@ -21,11 +21,12 @@ http.createServer((req, res) => {
       calls.push({ kind: 'put', rawPath: req.url.split('?')[0], query: u.search, type: h['content-type'], bytes: body.length, ftyp: body.subarray(4, 8).toString('latin1'), sha: createHash('sha256').update(body).digest('hex') })
       return send(res, req.url.split('?')[0].includes('%2F') ? 403 : 200)
     }
-    // Today's bookings (GET /admin/bookings/v2). The row leaves out the customer, so the kiosk reads 501 in full.
+    // Today's bookings (GET /admin/bookings/v2), in the shape Main measured on 10-19 (T1 #162 §7.1): rows carry `user`
+    // but NO `location` key, so the kiosk must confirm 501 by a full read by id.
     if (u.pathname === '/api/admin/bookings/v2') {
       calls.push({ kind: 'booking_list', day: u.searchParams.get('booking_date_from'), statuses: u.searchParams.get('status_ids'), emailInUrl: u.search.includes('%40') || u.search.includes('@') })
       if (h['x-api-key'] !== CD) return send(res, 401, { message: 'Unauthenticated.' })
-      return send(res, 200, { data: [{ id: 501, status: 'approved', paid: true, location: { location_id: 6 }, service_id: 13, employee_id: 12, start_date: today, starts_at: `${today} 10:30:00` }], current_page: 1, last_page: 1 })
+      return send(res, 200, { data: [{ id: 501, status: 'approved', paid: true, service_id: 13, employee_id: 12, user_id: 77, start_date: today, starts_at: `${today} 10:30:00`, user: { id: 77, email: 'guest@example.com', name: 'Drive', surname: 'Guest' } }], current_page: 1, last_page: 1, total: 1 })
     }
     if (u.pathname.startsWith('/api/admin/bookings/')) {
       calls.push({ kind: 'booking', id: u.pathname.split('/').pop(), auth: h['x-api-key'] === CD && ['drive-tenant', 'zqlc6ablyz'].includes(h['x-tenant']) })

@@ -4,7 +4,12 @@ import './globals.css'
 
 // The served page must be able to say which build it is, so a walk can tell
 // "the fix is deployed" from "the fix is merged".
-const BUILD = buildIdentity(process.env)
+// Named literally so Next inlines the build-time commit; the runtime commit covers dynamic pages such as /scan.
+const BUILD = buildIdentity({
+  NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA,
+  VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA,
+  VERCEL_ENV: process.env.VERCEL_ENV,
+})
 
 export const metadata: Metadata = {
   title: 'DR MAGfield — Experience Lounge',
@@ -24,11 +29,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Manrope:wght@300;400;500;700&family=Montserrat:wght@400;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-      </head>
+      {/* No third-party fonts here: the consent route (/scan) must load none (10-19 P3). The standee links its own. */}
       <body>
         {children}
         <small

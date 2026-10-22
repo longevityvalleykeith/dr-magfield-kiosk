@@ -8,6 +8,22 @@ const BASE = 'http://127.0.0.1:3107'
 const out = (k, v) => console.log(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] })
 const OPEN = process.env.DRIVE_MODE === 'open' // production simplicity: no KIOSK_ENROLL_CODE
+// DRIVE_MODE=paused (start next with SCANS_ENABLED=0): BS-00, the paused arrival from LV's old QR.
+if (process.env.DRIVE_MODE === 'paused') {
+  try {
+    const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true })).newPage()
+    const thirdParty = []
+    page.on('request', (r) => { const h = new URL(r.url()).hostname; if (h !== '127.0.0.1') thirdParty.push(h) })
+    await page.goto(`${BASE}/scan?src=lvqr`)
+    const text = (await page.locator('main').innerText()).replace(/\s+/g, ' ')
+    out('paused page', text)
+    out('back to booking', await page.getByRole('link', { name: 'Back to booking' }).getAttribute('href'))
+    out('check actions present', await page.locator('input, video, button').count())
+    out('build stamp', await page.locator('small[data-build]').innerText())
+    out('third-party hosts requested', [...new Set(thirdParty)])
+  } finally { await browser.close() }
+  process.exit(0)
+}
 try {
   // 1 · an unenrolled tablet is refused before any vendor call (enrolled mode only)
   if (!OPEN) {
@@ -50,6 +66,7 @@ try {
   })
   out('code step survives a hidden page', await page.getByText('Enter your code').isVisible())
   const { code } = await (await fetch('http://127.0.0.1:4810/__inbox')).json()
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw new Error(`no code reached the mock inbox (got ${code}): the lookup did not match`)
   out('code in the page', (await page.content()).includes(code))
   await page.getByLabel('6-digit code').fill(code)
   await page.getByRole('button', { name: 'Continue' }).click()
