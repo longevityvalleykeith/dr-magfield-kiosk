@@ -40,7 +40,9 @@ test('K1-03 BS-00: a booking-URL override must be https on longevityvalley.ai, o
 
 test('K1-04 BS-00: the paused page renders the paused message and the booking link, and nothing else of the check', () => {
   const k = src('app/scan/Kiosk.tsx')
-  const paused = k.slice(k.indexOf('if (!ready)'), k.indexOf('return (', k.indexOf('if (!ready)') + 12))
+  // From the paused branch to the main screen's root (the only element with onPointerDown).
+  const paused = k.slice(k.indexOf('if (!ready)'), k.indexOf('onPointerDown'))
+  assert.ok(paused.length > 0 && k.indexOf('onPointerDown') > k.indexOf('if (!ready)'))
   assert.ok(paused.includes('MESSAGES.CHECK_PAUSED'), 'paused branch uses the paused message')
   assert.ok(paused.includes('href={bookingUrl}'), 'paused branch links back to booking')
   assert.ok(!/submitBooking|submitCode|acceptConsent|startScan|<video/.test(paused), 'no OTP, consent, camera or scan action while paused')
@@ -75,6 +77,8 @@ test('K1-08 C7: the root layout names the commit variables literally, so Next in
 
 test('K1-09 C7: no third-party font host on the root layout or anywhere under /scan', () => {
   assert.ok(!src('app/layout.tsx').includes('fonts.googleapis.com'), 'root layout loads no Google Fonts')
+  // The root layout's global stylesheet reaches every route too (the drive caught an @import here, 10-22).
+  assert.ok(!src('app/globals.css').includes('fonts.g'), 'globals.css imports no Google Fonts')
   for (const f of walk(join(ROOT, 'app', 'scan'))) assert.ok(!readFileSync(f, 'utf8').includes('fonts.g'), f)
   assert.ok(src('app/page.tsx').includes('fonts.googleapis.com'), 'the standee keeps its own typefaces')
 })
