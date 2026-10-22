@@ -70,6 +70,9 @@ export function parseStateCommand(value: unknown): StateCommand | null {
       case 'take_code':
         return exactKeys(value, ['kind', 'challengeId', 'dayRef', 'day']) && isUuid(value.challengeId) && isRef(value.dayRef) && isDay(value.day)
           ? { kind: value.kind, challengeId: value.challengeId, dayRef: value.dayRef, day: value.day } : null
+      case 'check_eligibility':
+        return exactKeys(value, ['kind', 'dayRef', 'day']) && isRef(value.dayRef) && isDay(value.day)
+          ? { kind: value.kind, dayRef: value.dayRef, day: value.day } : null
       case 'claim_code':
         return exactKeys(value, ['kind', 'challengeId', 'owner', 'correct']) && isUuid(value.challengeId) && isUuid(value.owner) && typeof value.correct === 'boolean'
           ? { kind: value.kind, challengeId: value.challengeId, owner: value.owner, correct: value.correct } : null
@@ -101,7 +104,7 @@ export function parseStateCommand(value: unknown): StateCommand | null {
 }
 
 const REPLIES: Record<StateCommand['kind'], readonly StateKind[]> = {
-  take_code: ['granted', 'capped'], claim_code: ['granted', 'wrong', 'locked'],
+  take_code: ['granted', 'capped'], check_eligibility: ['granted', 'capped'], claim_code: ['granted', 'wrong', 'locked'],
   release_code: ['released', 'stale'], consume_code: ['consumed', 'locked', 'stale'],
   begin_check: ['granted', 'capped', 'pending', 'stale'], authorize_process: ['authorized', 'stale'],
   release_check: ['released', 'stale'], finish_check: ['finished', 'stale'],

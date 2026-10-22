@@ -2,7 +2,7 @@ import type { StateConfig, StateStore } from './state.ts'
 import { parseStateCommand, parseStateReply } from './state-validation.ts'
 
 const MAX_JWT_LIFETIME_SECONDS = 90 * 24 * 60 * 60
-const RPC_TIMEOUT_MS = 2_000
+export const RPC_TIMEOUT_MS = 2_000
 
 function validRoleJwt(jwt: string, now: Date): boolean {
   if (jwt.length > 8_192 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(jwt)) return false

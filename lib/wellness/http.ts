@@ -107,6 +107,11 @@ const bookingDayRef = (secret: string, config: WellnessConfig, bookingId: number
 /** Every lookup answers after the same time, matched or not, so its timing says nothing about who is booked. */
 export const LOOKUP_REPLY_MS = 2_500
 export const VERIFY_WRONG_REPLY_MS = 2_500
+/**
+ * Verification's spare time above its serial worst case (claim, the list pages, the parallel detail reads,
+ * eligibility, then consume or release), for overhead and the reply. The route's maxDuration covers both (K12-03).
+ */
+export const VERIFY_HEADROOM_MS = 5_000
 const DAY_LIST_TTL_MS = 30_000
 
 /**
@@ -227,13 +232,21 @@ export async function handleVerify(req: Request, deps: Deps): Promise<Response> 
   }
   const day = bookingDay(found.booking, config.outlet.timeZone)
   if (day === null) return refuse(409, 'BOOKING_CHANGED')
+  const dayRef = bookingDayRef(secret, config, found.booking.id, day)
+  // K-29: an exhausted booking is refused here, before consent and camera, by a read-only check. The code goes back
+  // to its owner untouched. begin_check's atomic cap stays the race barrier (K-30).
   // Verification intentionally does not refuse an active day hold (RT04); begin_check alone owns that admission.
+  const eligible = await transition(state, { kind: 'check_eligibility', dayRef, day })
+  if (eligible.kind !== 'granted') {
+    await transition(state, { kind: 'release_code', challengeId: ch.challengeId, owner })
+    if (eligible.kind === 'capped') return refuse(409, 'BOOKING_ALREADY_CHECKED')
+    return refuse(503, 'STATE_UNAVAILABLE')
+  }
   const issued = issueAttempt(secret, {
     bookingId: found.booking.id, emailHash: emailHash(secret, email), careEmployeeId: null, careEmailHash: null,
   }, now.getTime())
   const consumed = await transition(state, {
-    kind: 'consume_code', challengeId: ch.challengeId, owner, attemptId: issued.attemptId,
-    dayRef: bookingDayRef(secret, config, found.booking.id, day), day,
+    kind: 'consume_code', challengeId: ch.challengeId, owner, attemptId: issued.attemptId, dayRef, day,
   })
   if (consumed.kind !== 'consumed') {
     return refuse(consumed.kind === 'stale' || consumed.kind === 'locked' ? 429 : 503,
@@ -294,8 +307,19 @@ export async function handleScan(req: Request, deps: Deps): Promise<Response> {
     (await transition(state, { kind: 'finish_check', ...owned, outcome, delivery })).kind === 'finished'
   const submission = await submitVideo(config.facephys!, {
     video, videoSha256: sha256Hex(bytes), idempotencyKey: `dmk-${attempt.attemptId}`,
-    authorizeProcess: async () => (await transition(state, { kind: 'authorize_process', ...owned })).kind === 'authorized',
+    authorizeProcess: async () => {
+      const grant = (await transition(state, { kind: 'authorize_process', ...owned })).kind
+      return grant === 'authorized' ? 'authorized' : grant === 'stale' ? 'denied' : 'unavailable'
+    },
   }, deps.fetch, () => deps.now().getTime(), (host) => deps.log('vendor_upload_host', { host }))
+  if (submission.kind === 'authorization_denied') {
+    // A definite refusal (the ready window or the outlet day passed): nothing was processed, so the owner- and
+    // phase-guarded release frees the slot. If that release isn't acknowledged, the booking stays held.
+    deps.log('process_authorization_denied', {})
+    const released = await transition(state, { kind: 'release_check', ...owned })
+    if (released.kind !== 'released') return unknownOutcome(attempt.attemptId)
+    return json(409, { status: 'refused', code: 'ATTEMPT_INVALID', retryable: false })
+  }
   if (submission.kind === 'authorization_unavailable') {
     deps.log('process_authorization_unavailable', {})
     // It may have committed before the ACK was lost. Never process, release, or acquire a replacement owner.

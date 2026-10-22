@@ -177,6 +177,7 @@ begin
   v_kind := p_command->>'kind';
   v_keys := case v_kind
     when 'take_code' then array['kind','challengeId','dayRef','day']
+    when 'check_eligibility' then array['kind','dayRef','day']
     when 'claim_code' then array['kind','challengeId','owner','correct']
     when 'release_code' then array['kind','challengeId','owner']
     when 'consume_code' then array['kind','challengeId','owner','attemptId','dayRef','day']
@@ -312,6 +313,18 @@ begin
     if not found then return '{"kind":"capped"}'::jsonb; end if;
     update kiosk.wellness_day set codes_issued = codes_issued + 1, updated_at = v_now
       where day_ref = v_day_ref;
+    return '{"kind":"granted"}'::jsonb;
+  end if;
+
+  -- K-29: a read-only early refusal before consent and camera. No lock and no write; begin_check's cap stays the race barrier.
+  if v_kind = 'check_eligibility' then
+    v_now := pg_catalog.clock_timestamp();
+    if v_day <> (v_now at time zone 'Asia/Kuala_Lumpur')::date then
+      return '{"kind":"invalid"}'::jsonb;
+    end if;
+    if exists (select 1 from kiosk.wellness_day d where d.day_ref = v_day_ref and d.checks_spent >= 2) then
+      return '{"kind":"capped"}'::jsonb;
+    end if;
     return '{"kind":"granted"}'::jsonb;
   end if;
 

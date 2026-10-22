@@ -110,9 +110,9 @@ test('K12-05 K-29: the eligibility check is read-only and only answers granted o
   assert.deepEqual(parseStateReply('check_eligibility', { kind: 'granted' }), { kind: 'granted' })
   assert.deepEqual(parseStateReply('check_eligibility', { kind: 'capped' }), { kind: 'capped' })
   for (const k of ['consumed', 'authorized', 'pending', 'released']) assert.equal(parseStateReply('check_eligibility', { kind: k }), null, k)
-  // Asking twice changes nothing: two checks still complete afterwards, and a third is then refused.
+  // Asking spends nothing: after an extra verified attempt (one more eligibility read), two checks still complete.
+  // Three codes is the booking's daily allowance, so this uses all three.
   const w = world()
-  await attempt(w)
   await attempt(w)
   await completeOne(w)
   await completeOne(w)

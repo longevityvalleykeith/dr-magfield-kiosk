@@ -9,8 +9,8 @@
  *
  * Process may consume tokens, so it carries confirmCharge, a stable idempotencyKey and the
  * video's SHA-256. Vendor replay claims do not grant this kiosk permission to repeat a process call.
- * A one-time durable authorization is required immediately before process. Lost/denied authorization
- * never sends process; lost process responses remain unknown for separately authorized reconciliation.
+ * A one-time durable authorization is required immediately before process. Lost or denied authorization
+ * never sends process; a definite denial releases the reservation, a lost one stays held; lost process responses remain unknown for separately authorized reconciliation.
  */
 import { hmacBase64 } from './crypto.ts'
 import type { WellnessConfig } from './config.ts'
@@ -49,6 +49,7 @@ export type Submission =
   | { kind: 'completed'; body: unknown }
   | { kind: 'refused'; code: 'VENDOR_AUTH' | 'VENDOR_REFUSED' | 'VENDOR_REJECTED_VIDEO'; httpStatus: number }
   | { kind: 'not_submitted'; code: 'PRESIGN_FAILED' | 'UPLOAD_FAILED' | 'VENDOR_AUTH' }
+  | { kind: 'authorization_denied' }
   | { kind: 'authorization_unavailable' }
   | { kind: 'unknown_outcome' }
 
@@ -56,8 +57,11 @@ export interface SubmitArgs {
   video: ArrayBuffer
   videoSha256: string
   idempotencyKey: string
-  /** Exactly one durable preparing → dispatching grant, never an idempotent re-grant. */
-  authorizeProcess: () => Promise<boolean>
+  /**
+   * Exactly one durable preparing → dispatching grant, never an idempotent re-grant. 'denied' is the store's definite
+   * refusal; 'unavailable' is anything else (a lost acknowledgement may still have committed).
+   */
+  authorizeProcess: () => Promise<'authorized' | 'denied' | 'unavailable'>
 }
 
 export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeof fetch, nowMs: () => number, onUploadHost: (host: string) => void = () => undefined): Promise<Submission> {
@@ -90,7 +94,9 @@ export async function submitVideo(cfg: FacePhys, a: SubmitArgs, fetchImpl: typeo
 
   // 3 · Durable barrier immediately before the charge-bearing call. Response loss is not a grant.
   try {
-    if (!await a.authorizeProcess()) return { kind: 'authorization_unavailable' }
+    const grant = await a.authorizeProcess()
+    if (grant === 'denied') return { kind: 'authorization_denied' }
+    if (grant !== 'authorized') return { kind: 'authorization_unavailable' }
   } catch { return { kind: 'authorization_unavailable' } }
   // Re-signed, because presign and upload can take a while. There is no await between the grant and fetch.
   let res: Response
