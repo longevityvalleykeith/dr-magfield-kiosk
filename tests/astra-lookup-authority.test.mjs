@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleBooking } from '../lib/wellness/http.ts'
 import { Brakes } from '../lib/wellness/limits.ts'
+import { MemoryStateStore } from '../lib/wellness/state-memory.ts'
 
 const EMAIL = 'synthetic@example.invalid'
 const NOW = new Date('2026-10-19T04:00:00Z')
@@ -13,6 +14,9 @@ const env = {
   RESEND_API_KEY: 'test-only-fake-mail',
   CALENDESK_API_BASE: 'https://calendar.invalid',
   EMAIL_API_BASE: 'https://mail.invalid',
+  FACEPHYS_UPLOAD_HOSTS: 'synthetic-bucket.s3.amazonaws.com',
+  CONSENT_RETENTION_DAYS: '30',
+  CONSENT_RETENTION_POLICY: 'dmk-30-days-v1',
 }
 
 const eligible = {
@@ -35,6 +39,7 @@ function world({ pages = [{ data: [eligible], last_page: 1 }], details = new Map
   const state = { lists: [], details: [], mail: [], events: [], unexpected: [] }
   const deps = {
     env,
+    state: new MemoryStateStore(() => NOW),
     now: () => NOW,
     wait: async () => {},
     brakes: new Brakes(),

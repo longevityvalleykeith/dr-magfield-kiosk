@@ -16,6 +16,7 @@ import * as httpHandlers from '../lib/wellness/http.ts'
 import { KioskController, MESSAGES } from '../lib/wellness/controller.ts'
 import { CONSENT_VERSION, CONSENT_TEXT } from '../lib/wellness/consent.ts'
 import { Brakes } from '../lib/wellness/limits.ts'
+import { MemoryStateStore } from '../lib/wellness/state-memory.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SECRETS = { facephys: 'fp-secret-NEVER-LEAK-7f3a', calendesk: 'cd-key-NEVER-LEAK-91bc', mail: 'rs-key-NEVER-LEAK-2d4e' }
@@ -70,6 +71,14 @@ class World {
     this.presignHost = HOSTS.oss
     this.media = new FakeMedia()
     this.brakes = new Brakes()
+    // PR #10: one durable store shared by every request in the world, as the RPC store is in production.
+    this.stateCommands = []
+    const store = new MemoryStateStore(() => this.now)
+    this.state = { transition: async (command) => {
+      const reply = await store.transition(command)
+      this.stateCommands.push({ command, reply: reply.kind, callsBefore: this.calls.length })
+      return reply
+    } }
     this.waits = []
     this.mailRefuses = false
     this.controller = new KioskController({ api: this.api(), media: this.media, scanSeconds: 20 })
@@ -82,6 +91,7 @@ class World {
       now: () => this.now,
       log: (event, fields) => { this.logs.push(JSON.stringify({ event, ...fields })) },
       brakes: this.brakes,
+      state: this.state,
       wait: async (ms) => { this.waits.push(ms) },
     }
   }
@@ -205,7 +215,9 @@ class World {
     for (const m of this.mails()) if (!seen.has(m.headers['idempotency-key'])) seen.set(m.headers['idempotency-key'], m)
     return [...seen.values()]
   }
-  records() { return this.logs.map((l) => JSON.parse(l)).filter((l) => l.event === 'consent_record') }
+  /** The durable consent records: each granted begin_check carries the intent committed before FacePhys is called. */
+  records() { return this.stateCommands.filter((c) => c.command.kind === 'begin_check' && c.reply === 'granted').map((c) => ({ attemptId: c.command.attemptId, intent: c.command.intent, callsBefore: c.callsBefore })) }
+  finishes() { return this.stateCommands.filter((c) => c.command.kind === 'finish_check' && c.reply === 'finished').map((c) => c.command) }
   dispose() { this.controller.reset() }
 }
 
@@ -228,6 +240,8 @@ R.Given(/^the wellness check is enabled for outlet "([^"]+)" at Calendesk locati
     RESEND_API_KEY: SECRETS.mail, EMAIL_API_BASE: `https://${HOSTS.mail}`, EMAIL_FROM: 'DR MAGfield <kiosk@drmagfield.test>',
     KIOSK_ENROLL_CODE: 'enroll-code-for-tests-0001', KIOSK_COOKIE_SECRET: 'cookie-secret-for-tests-0123456789abcdef',
     FACEPHYS_UPLOAD_HOSTS: HOSTS.oss,
+    // Keith 10-19 §8: 30-day retention under the fixed policy. No CARE roster, so staff copies are off.
+    CONSENT_RETENTION_DAYS: '30', CONSENT_RETENTION_POLICY: 'dmk-30-days-v1',
   })
 })
 R.Given(/^this kiosk tablet is enrolled$/, async (w) => {
@@ -367,7 +381,7 @@ R.Then(/^the process request carried confirmCharge true, the attempt's idempoten
   assert.equal(c.body.videoSha256, FAKE_SHA)
   assert.match(c.body.objectKey, /^kiosk\/obj-\d+\.mp4$/)
   const [record] = w.records()
-  assert.equal(c.body.idempotencyKey, `dmk-${record.attemptId}`)
+  assert.equal(c.body.idempotencyKey, `dmk-${record.attemptId}`, 'the charge key is the attempt of the consent record')
   assert.ok(c.body.idempotencyKey.length >= 16 && c.body.idempotencyKey.length <= 200)
 })
 R.Then(/^exactly (\d+) email was sent to "([^"]+)" with CC "([^"]+)"$/, (w, n, to, cc) => {
@@ -397,36 +411,50 @@ R.Then(/^the kiosk shows the "result" screen with heart rate (\d+) bpm and the e
   assert.equal(s.result.delivery, 'sent')
   assert.deepEqual(s.result.indicators.map((i) => i.key).sort(), ['breathing_rate', 'heart_rate', 'hrv_rmssd', 'hrv_sdnn'])
 })
-// T1 #164 CALENDESK-CONSENT-FIELDS (Keith: location and CARE employee ID) plus Keith's chosen sent/failed codes.
-const CONSENT_FIELDS = ['attemptId', 'bookingId', 'calendeskAccountRef', 'careCcDecision', 'careEmployeeId', 'careRecipientRef', 'consentRecordId', 'delivery',
-  'deleteAfter', 'event', 'guestRecipientRef', 'locationId', 'noticeVersion', 'outcome', 'processingDecision', 'purpose', 'recordedAt', 'retentionPolicyVersion',
-  'schemaVersion', 'serviceId', 'serviceLocationId', 'serviceTypeId', 'sourceSurface', 'subjectBinding', 'tenantId', 'verificationCheckedAt', 'verificationPolicyVersion']
-R.Then(/^the consent record holds only the admitted fields, with Calendesk location (\d+), CARE employee (\d+), the CC agreed and no email address or reading$/, (w, loc, emp) => {
+// T1 #164 CALENDESK-CONSENT-FIELDS (Keith: location and CARE employee ID), as PR #10's durable intent (dmk-consent-v3).
+const CONSENT_FIELDS = ['bookingRef', 'calendeskAccountRef', 'careCcDecision', 'careEmployeeId', 'careRecipientRef', 'emailResultsDecision', 'guestRecipientRef',
+  'locationId', 'noticeVersion', 'processingDecision', 'purpose', 'retentionPolicyVersion', 'schemaVersion', 'serviceId', 'serviceLocationId', 'serviceTypeId',
+  'sourceSurface', 'subjectBinding', 'tenantId', 'verificationCheckedAt', 'verificationPolicyVersion']
+R.Then(/^the consent record holds only the admitted fields, with Calendesk location (\d+), CARE employee (\d+), the CC "([a-z]+)" and no email address or reading$/, (w, loc, emp, cc) => {
   const records = w.records()
   assert.equal(records.length, 1)
-  const r = records[0]
+  const r = records[0].intent
   assert.deepEqual(Object.keys(r).sort(), [...CONSENT_FIELDS].sort())
-  assert.equal(r.schemaVersion, 'dmk-consent-v2')
+  assert.equal(r.schemaVersion, 'dmk-consent-v3')
   assert.equal(r.noticeVersion, CONSENT_VERSION)
-  assert.equal(r.bookingId, 501)
+  assert.match(r.bookingRef, /^[0-9a-f]{64}$/, 'the booking is a keyed reference, never the raw ID')
   assert.equal(r.locationId, +loc)
   assert.equal(r.serviceLocationId, 9006, 'serviceLocationId comes from location.id, never from locationId')
   assert.equal(r.careEmployeeId, +emp)
-  assert.equal(r.careCcDecision, 'agreed')
+  assert.equal(r.careCcDecision, cc)
+  assert.equal(r.careRecipientRef, null)
   assert.equal(r.subjectBinding, 'booking-inbox-code-v1', 'the code proves the inbox, not the person')
   assert.match(r.guestRecipientRef, /^[0-9a-f]{64}$/)
-  assert.match(r.careRecipientRef, /^[0-9a-f]{64}$/)
-  assert.equal(r.retentionPolicyVersion, 'unset')
-  assert.equal(r.deleteAfter, null)
-  assert.equal(r.outcome, 'completed')
-  assert.equal(r.delivery, 'sent')
+  assert.equal(r.retentionPolicyVersion, 'dmk-30-days-v1')
   assert.ok(!JSON.stringify(r).includes('@'), 'an email address entered the record')
+  assert.ok(!/[:[,]\s*(72|41|55|0\.9)\b/.test(JSON.stringify({ ...r, careEmployeeId: null, locationId: null, serviceId: null, serviceLocationId: null })), 'a reading entered the record')
 })
 R.Then(/^the consent record keeps CARE employee (\d+) with the CC "([a-z]+)"$/, (w, emp, decision) => {
-  const [r] = w.records()
+  const [{ intent: r }] = w.records()
   assert.equal(r.careEmployeeId, +emp)
   assert.equal(r.careCcDecision, decision)
   assert.equal(r.careRecipientRef, null)
+})
+R.Then(/^the consent record was finished as "([a-z_]+)" with the email "([a-z_]+)"$/, (w, outcome, delivery) => {
+  const done = w.finishes()
+  assert.equal(done.length, 1)
+  assert.equal(done[0].outcome, outcome)
+  assert.equal(done[0].delivery, delivery)
+})
+R.Then(/^the consent record was committed before the first FacePhys request$/, (w) => {
+  const [rec] = w.records()
+  assert.ok(rec, 'no durable consent record')
+  const first = w.calls.findIndex((c) => c.host === HOSTS.facephys || c.host === HOSTS.oss)
+  assert.ok(first >= 0, 'FacePhys was never called')
+  assert.ok(rec.callsBefore <= first, 'FacePhys was called before the consent record was committed')
+})
+R.Then(/^no Calendesk employee was read$/, (w) => {
+  assert.equal(w.callsTo(HOSTS.calendesk).filter((c) => c.path.startsWith('/api/admin/employees/')).length, 0)
 })
 R.Then(/^the scan reply reports the CC as "([a-z]+)"$/, (w, status) => { assert.equal(w.lastReply.body.ccStatus, status) })
 R.Then(/^no CARE recipient is offered$/, (w) => { assert.equal(w.controller.state.attempt.care, null) })
@@ -480,10 +508,11 @@ R.Then(/^the kiosk code uses no localStorage, sessionStorage, IndexedDB or servi
 })
 
 // ── v1.7 runtime review (#164 ADVERSARIAL-RUNTIME-019) ─────────────────
-R.Given(/^the consent screen shows the exact To address "([^"]+)" and CC address "([^"]+)"$/, (w, to, cc) => {
+R.Given(/^the consent screen shows the exact To address "([^"]+)" and no CC address$/, (w, to) => {
   const a = w.controller.state.attempt
-  assert.equal(a.email, to)
-  assert.equal(a.care.email, cc, 'the CC destination must be shown exactly before consent (CLOUD-10)')
+  assert.equal(w.controller.state.screen, 'consent')
+  assert.equal(a.email, to, 'the To destination must be shown exactly before consent (CLOUD-10)')
+  assert.equal(a.care, null, 'staff copies are off (Keith 10-19 §8)')
 })
 R.Then(/^every outbound request refused redirects$/, (w) => {
   assert.ok(w.calls.length > 0)
@@ -493,15 +522,16 @@ R.Given(/^FacePhys will return heart rate (\d+), RMSSD (\d+), SDNN (\d+) and bre
   w.process.push({ type: 'result', body: { ok: true, result: { heartRate: +hr, hrv: { rmssd: +rm, sdnn: +sd }, breathingRate: +br } } })
 })
 R.Given(/^no upload host is pinned$/, (w) => { delete w.env.FACEPHYS_UPLOAD_HOSTS })
+R.Given(/^the upload host "([^"]+)" is pinned$/, (w, host) => { w.env.FACEPHYS_UPLOAD_HOSTS = host; w.controller.reset() })
 R.When(/^staff run the free FacePhys preflight on this tablet$/, async (w) => {
   const req = new Request('https://kiosk.test/api/wellness/health?probe=facephys', { headers: w.headers() })
   await w.capture(await handleHealth(req, w.deps()))
 })
-R.Then(/^the preflight names the upload host "([^"]+)" as allowed by the "(dynamic|pinned)" rule$/, (w, host, rule) => {
+R.Then(/^the preflight names the upload host "([^"]+)" as (allowed|not allowed) by the "(dynamic|pinned)" rule$/, (w, host, allowed, rule) => {
   const b = w.lastReply.body
   assert.equal(b.facephysAuth, 'ok')
   assert.equal(b.uploadHost, host)
-  assert.equal(b.uploadHostAllowed, true)
+  assert.equal(b.uploadHostAllowed, allowed === 'allowed')
   assert.equal(b.uploadPolicy, rule)
   assert.equal(b.calendeskAuth, 'ok', 'the free probe also proves the Calendesk key and tenant')
   assert.ok(!w.lastReply.text.includes('Signature'), 'the signed upload URL must never be returned')
@@ -523,12 +553,7 @@ R.Given(/^FacePhys takes (\d+) seconds and then returns heart rate (\d+), RMSSD 
   w.process.push({ type: 'result', delayMs: +secs * 1000, body: vendorResult(+hr, +rm, +sd, +br, +q) })
 })
 R.Then(/^no consent-record email went to "([^"]+)"$/, (w) => { assert.equal(w.recordMails().length, 0) })
-R.Then(/^the consent record line is still written$/, (w) => {
-  assert.equal(w.records().length, 1)
-  assert.ok(w.logs.some((l) => JSON.parse(l).event === 'consent_record_email_skipped'), 'the skip must be logged')
-})
 
-R.Given(/^same-key retry is switched on$/, (w) => { w.env.SAME_KEY_RETRY = '1' })
 R.When(/^the same attempt is resent at the network level$/, async (w) => { await w.api().scan(w.lastScanInput) })
 R.Then(/^the kiosk offers no retry and shows the reference of the consent record's attempt$/, (w) => {
   const s = w.controller.state
@@ -538,9 +563,9 @@ R.Then(/^the kiosk offers no retry and shows the reference of the consent record
   assert.ok(rec.attemptId.startsWith(s.reference), 'the reference must locate the consent record')
 })
 
-// ── production simplicity (Keith 10-19) ──────────────────────────────
-R.Given(/^production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured$/, (w) => {
-  for (const k of ['KIOSK_ENROLL_CODE', 'KIOSK_COOKIE_SECRET', 'FACEPHYS_UPLOAD_HOSTS']) delete w.env[k]
+// ── production minimum (Keith 10-19 simplicity, under the 10-19 §8 rulings) ──
+R.Given(/^production minimum: no enrolment code, cookie secret or CARE roster is configured$/, (w) => {
+  for (const k of ['KIOSK_ENROLL_CODE', 'KIOSK_COOKIE_SECRET']) delete w.env[k]
   w.roster = null
 })
 R.Given(/^Calendesk names employee (\d+) as "([^"]+)" with "([^"]+)"$/, (w, id, name, email) => {
@@ -572,7 +597,8 @@ async function completeCheck(w, id, email) {
   assert.equal(w.controller.state.screen, 'result', `booking ${id}: ${w.lastReply?.body?.code}`)
   w.controller.reset()
 }
-const mark = (w) => { w.mark = { process: w.processCalls().length, calendesk: w.callsTo(HOSTS.calendesk).length, cameraOpens: w.media.openCount } }
+const mark = (w) => { w.mark = { process: w.processCalls().length, facephys: w.callsTo(HOSTS.facephys, HOSTS.oss).length, calendesk: w.callsTo(HOSTS.calendesk).length, cameraOpens: w.media.openCount } }
+R.Then(/^no further presign, upload or process request reached FacePhys$/, (w) => { assert.equal(w.callsTo(HOSTS.facephys, HOSTS.oss).length, w.mark.facephys) })
 R.Then(/^the camera was not opened again$/, (w) => { assert.equal(w.media.openCount, w.mark.cameraOpens) })
 R.Given(/^the guest already completed (\d+) checks for booking (\d+) today$/, async (w, n, id) => {
   const email = w.bookings.get(Number(id)).user.email
@@ -690,6 +716,10 @@ R.When(/^the guest completes another check for booking (\d+)$/, async (w, id) =>
   await w.controller.acceptConsent()
   w.process.push({ type: 'ok', body: OK }); w.processIndex = w.process.length - 1
   await w.controller.startScan()
+})
+R.When(/^the guest enters the code for another check for booking (\d+)$/, async (w, id) => {
+  w.controller.reset()
+  await confirm(w, id, w.bookings.get(Number(id)).user.email)
 })
 R.Given(/^Calendesk lists bookings without their location$/, (w) => { w.listOmitsLocation = true })
 R.When(/^a lookup names booking (\d+) with "([^"]+)"$/, async (w, id, email) => { await w.api().booking({ bookingId: id, email }) })

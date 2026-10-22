@@ -69,6 +69,10 @@ export function parseBooking(raw: unknown): BookingFacts | null {
   }
 }
 
+/** Every Calendesk call's deadline, and the most list pages read. Verification's route budget is built from these. */
+export const CALENDESK_TIMEOUT_MS = 4_000
+export const CALENDESK_LIST_PAGES = 3
+
 export async function readBooking(cfg: NonNullable<WellnessConfig['calendesk']>, bookingId: number, fetchImpl: typeof fetch): Promise<BookingRead> {
   let res: Response
   try {
@@ -76,7 +80,7 @@ export async function readBooking(cfg: NonNullable<WellnessConfig['calendesk']>,
       method: 'GET',
       headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' },
       redirect: 'error',
-      signal: AbortSignal.timeout(4_000),
+      signal: AbortSignal.timeout(CALENDESK_TIMEOUT_MS),
     })
   } catch { return { ok: false, reason: 'BOOKING_UNAVAILABLE' } }
   if (res.status === 404) return { ok: false, reason: 'BOOKING_NOT_FOUND' }
@@ -93,7 +97,7 @@ export async function readEmployee(cfg: NonNullable<WellnessConfig['calendesk']>
       method: 'GET',
       headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' },
       redirect: 'error',
-      signal: AbortSignal.timeout(4_000),
+      signal: AbortSignal.timeout(CALENDESK_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const emp = parseEmployee(await res.json())
@@ -105,7 +109,7 @@ export async function readEmployee(cfg: NonNullable<WellnessConfig['calendesk']>
 export async function calendeskReachable(cfg: NonNullable<WellnessConfig['calendesk']>, fetchImpl: typeof fetch): Promise<boolean> {
   try {
     const res = await fetchImpl(`${cfg.baseUrl}/admin/settings`, {
-      method: 'GET', headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(4_000),
+      method: 'GET', headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(CALENDESK_TIMEOUT_MS),
     })
     return res.ok
   } catch { return false }
@@ -120,12 +124,12 @@ export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk
   const rows: BookingFacts[] = []
   let shaped = false
   let lastPage: number | null = null
-  for (let page = 1; page <= 3; page++) {
+  for (let page = 1; page <= CALENDESK_LIST_PAGES; page++) {
     const q = new URLSearchParams({ booking_date_from: day, booking_date_to: day, limit: '100', page: String(page) })
     let body: unknown
     try {
       const res = await fetchImpl(`${cfg.baseUrl}/admin/bookings/v2?${q}`, {
-        method: 'GET', headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(4_000),
+        method: 'GET', headers: { 'X-Api-Key': cfg.apiKey, 'X-Tenant': cfg.tenant, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(CALENDESK_TIMEOUT_MS),
       })
       if (!res.ok) return null
       body = await res.json()
@@ -133,7 +137,7 @@ export async function listDayBookings(cfg: NonNullable<WellnessConfig['calendesk
     const top = obj(body)
     if (!top || !Array.isArray(top.data)) return null
     const last = int(top.last_page)
-    if (last === null || last < page || last > 3 || (lastPage !== null && last !== lastPage)) return null
+    if (last === null || last < page || last > CALENDESK_LIST_PAGES || (lastPage !== null && last !== lastPage)) return null
     if ('current_page' in top && int(top.current_page) !== page) return null
     lastPage = last
     // Field names only (never values), so the list's real shape can be calibrated from the logs (booking 21, 10-19).

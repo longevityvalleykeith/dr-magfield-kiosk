@@ -31,33 +31,38 @@ test('upload URL: %2F is restored in the path only; the signed query stays byte-
   assert.equal(normalizeUploadUrl('https://o.test/a%2fb.mp4'), 'https://o.test/a/b.mp4')
 })
 
-test('upload origin: the dynamic rule admits FacePhys and known storage providers over https, nothing else', () => {
-  const cfg = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's' }).facephys
-  assert.equal(cfg.uploadPolicy, 'dynamic')
-  assert.equal(uploadHostAllowed('https://b.oss-ap-southeast-3.aliyuncs.com/x.mp4?sig=1', cfg), 'b.oss-ap-southeast-3.aliyuncs.com')
-  assert.equal(uploadHostAllowed('https://upload.facephys.com/x.mp4', cfg), 'upload.facephys.com')
-  assert.equal(uploadHostAllowed('https://kiosk.s3.ap-southeast-1.amazonaws.com/x', cfg), 'kiosk.s3.ap-southeast-1.amazonaws.com')
-  assert.equal(uploadHostAllowed('https://evil.example/x.mp4', cfg), null)
-  assert.equal(uploadHostAllowed('https://aliyuncs.com.evil.example/x.mp4', cfg), null, 'a suffix lookalike is refused')
-  assert.equal(uploadHostAllowed('http://b.oss-ap-southeast-3.aliyuncs.com/x.mp4', cfg), null, 'never plaintext')
-  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', cfg), null, 'no loopback in production')
-  const pinned = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's', FACEPHYS_UPLOAD_HOSTS: 'oss-ap-southeast-1.aliyuncs.com' }).facephys
+test('upload origin: only the one exact pinned host over https; no dynamic rule, suffix, port, credentials or loopback', () => {
+  const unpinned = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's' }).facephys
+  assert.equal(unpinned.uploadPolicy, 'dynamic')
+  assert.equal(uploadHostAllowed('https://b01.oss-ap-southeast-3.aliyuncs.com/x.mp4?sig=1', unpinned), null, 'no pin admits nothing')
+  const pinned = readConfig({ FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's', FACEPHYS_UPLOAD_HOSTS: 'b01.oss-ap-southeast-3.aliyuncs.com' }).facephys
   assert.equal(pinned.uploadPolicy, 'pinned')
-  assert.equal(uploadHostAllowed('https://b.oss-cn-hangzhou.aliyuncs.com/x', pinned), null, 'a pin narrows the rule')
-  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', { baseUrl: 'http://127.0.0.1:4810', uploadHosts: ['127.0.0.1'] }), '127.0.0.1')
-  assert.equal(uploadHostAllowed('https://b.oss-ap-southeast-3.aliyuncs.com/x', { baseUrl: 'https://www.facephys.com', uploadHosts: [] }), null, 'an empty list admits nothing')
+  assert.equal(uploadHostAllowed('https://b01.oss-ap-southeast-3.aliyuncs.com/x.mp4?sig=1', pinned), 'b01.oss-ap-southeast-3.aliyuncs.com')
+  assert.equal(uploadHostAllowed('https://x.b01.oss-ap-southeast-3.aliyuncs.com/x.mp4', pinned), null, 'a pin is never a suffix')
+  assert.equal(uploadHostAllowed('https://b02.oss-ap-southeast-3.aliyuncs.com/x', pinned), null, 'another bucket')
+  assert.equal(uploadHostAllowed('http://b01.oss-ap-southeast-3.aliyuncs.com/x.mp4', pinned), null, 'never plaintext')
+  assert.equal(uploadHostAllowed('https://b01.oss-ap-southeast-3.aliyuncs.com:8443/x.mp4', pinned), null, 'no custom port')
+  assert.equal(uploadHostAllowed('https://u:p@b01.oss-ap-southeast-3.aliyuncs.com/x.mp4', pinned), null, 'no credentials')
+  assert.equal(uploadHostAllowed('http://127.0.0.1:4810/oss/x.mp4', { baseUrl: 'http://127.0.0.1:4810', uploadHosts: ['127.0.0.1'] }), null, 'no loopback exception')
 })
 
-test('production simplicity: four vendor secrets plus the switch are enough; the rest is defaulted or derived', () => {
-  const c = readConfig({ SCANS_ENABLED: '1', FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's3cret', CALENDESK_API_KEY: 'cd', RESEND_API_KEY: 'rs' })
-  assert.equal(isReady(c), true)
+test('production minimum: four vendor secrets, the switch, one exact admitted pin, the 30-day policy and durable state', () => {
+  const env = { SCANS_ENABLED: '1', FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's3cret', CALENDESK_API_KEY: 'cd', RESEND_API_KEY: 'rs',
+    FACEPHYS_UPLOAD_HOSTS: 'synthetic-bucket.s3.amazonaws.com', CONSENT_RETENTION_DAYS: '30', CONSENT_RETENTION_POLICY: 'dmk-30-days-v1' }
+  const c = readConfig(env)
+  assert.equal(isReady(c, true), true)
+  assert.equal(isReady(c), false, 'no durable state, no check')
   assert.equal(c.calendesk.tenant, 'zqlc6ablyz')
   assert.equal(c.mail.from, 'DR MAGfield <noreply@longevityvalley.ai>')
   assert.equal(c.device.enrollCode, null, 'open mode: no tablet set-up')
   assert.equal(c.device.cookieSecret, createHmac('sha256', 's3cret').update('dmk-kiosk-signing-v1').digest('hex'))
-  assert.equal(c.careSource, 'calendesk')
-  assert.equal(isReady(readConfig({ SCANS_ENABLED: '1', FACEPHYS_KEY_ID: 'k', FACEPHYS_SECRET_KEY: 's', CALENDESK_API_KEY: 'cd', RESEND_API_KEY: 'rs', KIOSK_ENROLL_CODE: 'short' })), false, 'a too-short enrolment code fails closed')
-  assert.equal(readConfig({ CARE_ROSTER_JSON: '[]' }).careSource, 'roster')
+  assert.equal(c.careSource, 'off', 'Keith 10-19 §8: CC off until a KRPM-only roster exists')
+  assert.equal(isReady(readConfig({ ...env, KIOSK_ENROLL_CODE: 'short' }), true), false, 'a too-short enrolment code fails closed')
+  assert.equal(isReady(readConfig({ ...env, FACEPHYS_UPLOAD_HOSTS: '' }), true), false, 'no pin, no check')
+  assert.equal(isReady(readConfig({ ...env, CONSENT_RETENTION_DAYS: '' }), true), false, 'no 30-day retention, no check')
+  const withRoster = readConfig({ ...env, CARE_ROSTER_JSON: JSON.stringify([{ calendeskEmployeeId: 12, name: 'A', email: 'a@example.com', outlets: ['krpm'], active: true }]) })
+  assert.equal(withRoster.careSource, 'roster')
+  assert.equal(isReady(withRoster, true), false, 'a roster keeps the check off until a KRPM-only roster is admitted')
 })
 
 test('the booking employee is parsed from its nested Calendesk user, never invented', () => {

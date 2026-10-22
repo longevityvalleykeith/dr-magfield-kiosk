@@ -1,20 +1,21 @@
 @cloud_v3 @fake_provider @fake_mail
 Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness check
   The guest's booking is matched before the camera opens. FacePhys v3 processes a
-  short face video and the results go to the guest by email, with an optional CC
-  to the booking's CARE employee, and on screen until reset. LV keeps only a
-  minimal consent record: never video, readings or email addresses.
+  short face video and the results go to the guest by email only, and on screen
+  until reset. LV keeps only a minimal consent record for 30 days, committed to
+  durable state before FacePhys is called: never video, readings or email addresses.
 
-  Trace: T1 #164 (CLOUD-01..18, O2O-01..12). Keith's 10-19 choices are the
-  kiosk reading Calendesk, the minimal consent record, one email with CC, and
-  guests only after his own-face test plus Main's and Astra's grades.
+  Trace: T1 #164 (CLOUD-01..18, O2O-01..12). Keith's 10-19 §8 rulings bind this
+  world: 30-day retention, one exact upload-host pin (Alibaba OSS admitted 10-22,
+  beside R2/S3/GCS), staff copies (CC) off until a KRPM-only roster exists, and
+  durable shared state (PR #10). Guests only after his own-face test, Main's and
+  Astra's grades, and his re-open word.
 
   Background:
     Given the wellness check is enabled for outlet "krpm" at Calendesk location 6
     And this kiosk tablet is enrolled
     And today in Kuala Lumpur is "2026-10-20"
     And Calendesk has booking 501 at location 6 for service 13 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
-    And the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as active at "krpm"
 
   Scenario: K-01 Declining keeps the camera closed and the visit unchanged (O2O-01)
     When the guest declines the wellness check
@@ -47,71 +48,60 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     Then the booking is refused with "BOOKING_NOT_FOUND"
     And the kiosk shows the same message as for a mismatched booking
 
-  Scenario: K-05 One email to the guest with a CC to the booking's CARE employee (O2O-04, O2O-05)
+  Scenario: K-05 One email to the guest only, with staff copies off (O2O-04, Keith 10-19 §8)
     Given the guest confirmed booking 501 with "guest@example.com"
-    And the consent screen shows the exact To address "guest@example.com" and CC address "aisyah@example.com"
+    And the consent screen shows the exact To address "guest@example.com" and no CC address
     And the guest agreed to processing and email delivery
-    And the guest ticked CC to "Aisyah"
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
     Then FacePhys received exactly 1 presign, 1 upload and 1 process request
     And every outbound request refused redirects
     And the process request carried confirmCharge true, the attempt's idempotency key and the video's SHA-256
-    And exactly 1 email was sent to "guest@example.com" with CC "aisyah@example.com"
+    And exactly 1 email was sent to "guest@example.com" with no CC
     And the email says "wellness indicator, not a medical measurement"
     And the kiosk shows the "result" screen with heart rate 72 bpm and the email as sent
-    And the consent record holds only the admitted fields, with Calendesk location 6, CARE employee 12, the CC agreed and no email address or reading
-
-  Scenario: K-06 Sharing starts unticked, so without the guest's tick there is no CC (O2O-05)
-    Given the guest confirmed booking 501 with "guest@example.com"
-    And the guest agreed to processing and email delivery
+    And the consent record holds only the admitted fields, with Calendesk location 6, CARE employee 12, the CC "declined" and no email address or reading
+    And the consent record was finished as "completed" with the email "sent"
+  Scenario: K-06 No CC is offered while staff copies are off, so the guest has nothing to tick (O2O-05)
+    When the guest confirms booking 501 with "guest@example.com"
+    Then no CARE recipient is offered
+    Given the guest agreed to processing and email delivery
     And FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
     And the consent record keeps CARE employee 12 with the CC "declined"
-
-  Scenario: K-07 An inactive CARE employee is never CC'd, never replaced, and never blocks the guest's check (O2O-04)
-    Given the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as inactive at "krpm"
-    And the CARE roster lists employee 13 "Ben" with "ben@example.com" as active at "krpm"
-    And FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
+  Scenario: K-07 A forged CC on the scan request is never honoured, and never blocks the guest's check (O2O-04)
+    Given FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest confirms booking 501 with "guest@example.com"
     Then no CARE recipient is offered
     When the guest forces a CC on the scan request
     Then exactly 1 email was sent to "guest@example.com" with no CC
     And the scan reply reports the CC as "unavailable"
-
-  Scenario: K-17 A CARE employee who leaves the roster after the match is dropped from the CC, and the check still runs (O2O-04, O2O-05)
+    And the consent record keeps CARE employee 12 with the CC "unavailable"
+  Scenario: K-17 A configured CARE roster keeps the check off until a KRPM-only roster is admitted (Keith 10-19 §8)
+    Given the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as active at "krpm"
+    When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "CHECK_DISABLED"
+    And no request reached FacePhys, Calendesk or the mail provider
+  Scenario: K-08 A double tap or a network resend never creates a second charge (O2O-06)
     Given the guest confirmed booking 501 with "guest@example.com"
-    And the guest agreed to processing and email delivery
-    And the guest ticked CC to "Aisyah"
-    And the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as inactive at "krpm"
-    And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
-    When the guest starts the scan
-    Then exactly 1 email was sent to "guest@example.com" with no CC
-    And the scan reply reports the CC as "unavailable"
-    And the kiosk shows the "result" screen
-
-  Scenario: K-08 A double tap never creates a second charge (O2O-06)
-    Given same-key retry is switched on
-    And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan twice for the same attempt
-    Then every process request carried the same idempotency key and the same video SHA-256
-
-  Scenario: K-09 A lost FacePhys response stays unknown, and a retry reuses the same key (O2O-07)
-    Given same-key retry is switched on
-    And the guest confirmed booking 501 with "guest@example.com"
+    Then FacePhys received exactly 1 presign, 1 upload and 1 process request
+    And the scan is refused with "ATTEMPT_ALREADY_SUBMITTED"
+    And exactly 1 email was sent to "guest@example.com" with no CC
+  Scenario: K-09 A lost FacePhys response holds the booking until it is reconciled: no retry, no second charge (O2O-07)
+    Given the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys accepts the process request but its response is lost
     When the guest starts the scan
     Then the kiosk shows the "unknown" screen
     And no email was sent
-    When FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
-    And the guest retries the same attempt
-    Then every process request carried the same idempotency key and the same video SHA-256
-    And exactly 1 email was sent to "guest@example.com" with no CC
-
+    And the consent record was finished as "unknown_outcome" with the email "not_attempted"
+    When the guest completes another check for booking 501
+    Then the scan is refused with "CHECK_PENDING"
+    And FacePhys received exactly 1 presign, 1 upload and 1 process request
   Scenario: K-10 A poor signal shows no invented values and sends no email (O2O-11)
     Given the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
@@ -141,12 +131,10 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
   Scenario: K-13 A sent email is not CARE acceptance (O2O-09)
     Given the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
-    And the guest ticked CC to "Aisyah"
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
     Then the kiosk reports the email as "sent"
     And nothing the kiosk shows or returns says the CARE team accepted or fulfilled anything
-
   Scenario: K-14 The kill switch refuses before any vendor call (O2O-11)
     Given the wellness check is switched off
     When the guest confirms booking 501 with "guest@example.com"
@@ -179,42 +167,41 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     Then the kiosk shows the "insufficient" screen with no values
     And no email was sent
 
-  Scenario: K-19 With no static pin, the free preflight names the upload host and the dynamic rule that admits it (CLOUD-04)
+  Scenario: K-19 With no upload pin the check stays off, and the free preflight names the host to pin (CLOUD-04, K2)
     Given no upload host is pinned
     When staff run the free FacePhys preflight on this tablet
-    Then the preflight names the upload host "facephys-kiosk.oss-ap-southeast-1.aliyuncs.com" as allowed by the "dynamic" rule
+    Then the preflight names the upload host "facephys-kiosk.oss-ap-southeast-1.aliyuncs.com" as not allowed by the "dynamic" rule
     And no video was uploaded and no process request was sent
     When the guest confirms booking 501 with "guest@example.com"
+    Then the kiosk is refused with "CHECK_DISABLED"
+    Given the upload host "facephys-kiosk.oss-ap-southeast-1.aliyuncs.com" is pinned
+    When staff run the free FacePhys preflight on this tablet
+    Then the preflight names the upload host "facephys-kiosk.oss-ap-southeast-1.aliyuncs.com" as allowed by the "pinned" rule
+    When the guest confirms booking 501 with "guest@example.com"
     Then the kiosk shows the "consent" screen
-
-  Scenario: K-20 Consent records can also go to an LV mailbox, carrying no address or reading
+  Scenario: K-20 The consent record is committed before the first FacePhys call, and LV mails no record copy
     Given consent records are also mailed to "records@lv.test"
     And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
-    Then exactly 1 consent-record email went to "records@lv.test" with no other email address or reading in it
-
-  Scenario: K-21 A slow scan never overruns the function: the optional record email is skipped near the deadline
-    Given consent records are also mailed to "records@lv.test"
-    And the guest confirmed booking 501 with "guest@example.com"
+    Then the consent record was committed before the first FacePhys request
+    And no consent-record email went to "records@lv.test"
+  Scenario: K-21 A slow FacePhys reply still finishes the check and its consent record
+    Given the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     And FacePhys takes 52 seconds and then returns heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
-    And no consent-record email went to "records@lv.test"
-    And the consent record line is still written
-
-  Scenario: K-22 A CARE address that changes after the match drops the CC instead of following it (O2O-05)
-    Given the guest confirmed booking 501 with "guest@example.com"
+    And the consent record was finished as "completed" with the email "sent"
+  Scenario: K-22 The booking's Calendesk employee is never used as a CC, even when Calendesk names them (O2O-05)
+    Given Calendesk names employee 12 as "Aisyah" with "aisyah@example.com"
+    And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
-    And the guest ticked CC to "Aisyah"
-    And the CARE roster lists employee 12 "Aisyah" with "aisyah.new@example.com" as active at "krpm"
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
-    And the scan reply reports the CC as "unavailable"
-
+    And no Calendesk employee was read
   Scenario: K-23 By default an unknown outcome stops: no retry, and a reference to reconcile (O2O-07)
     Given the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
@@ -225,31 +212,27 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest retries the same attempt
     Then FacePhys received exactly 1 presign, 1 upload and 1 process request
     When the same attempt is resent at the network level
-    Then the scan is refused with "ATTEMPT_ALREADY_SUBMITTED"
+    Then the scan is refused with "CHECK_PENDING"
     And FacePhys received exactly 1 presign, 1 upload and 1 process request
 
-  Scenario: K-24 Production simplicity: no enrolment, roster, cookie secret or host pin, and the CC comes from Calendesk
-    Given production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured
+  Scenario: K-24 Production minimum: open mode, four vendor secrets, one exact upload pin, 30-day retention and durable state
+    Given production minimum: no enrolment code, cookie secret or CARE roster is configured
     And Calendesk names employee 12 as "Aisyah" with "aisyah@example.com"
     And this kiosk tablet is not enrolled
     When the guest confirms booking 501 with "guest@example.com"
-    Then the consent screen shows the exact To address "guest@example.com" and CC address "aisyah@example.com"
+    Then the consent screen shows the exact To address "guest@example.com" and no CC address
     Given the guest agreed to processing and email delivery
-    And the guest ticked CC to "Aisyah"
     And FacePhys will return heart rate 72, RMSSD 41, SDNN 55 and breathing rate 14 with signal quality 0.9
     When the guest starts the scan
-    Then exactly 1 email was sent to "guest@example.com" with CC "aisyah@example.com"
+    Then exactly 1 email was sent to "guest@example.com" with no CC
     And every outbound request refused redirects
-
-  Scenario: K-25 The dynamic rule refuses an upload host outside FacePhys and the known storage providers (CLOUD-04)
-    Given no upload host is pinned
-    And FacePhys presigns uploads to "uploads.evil.example"
+  Scenario: K-25 An upload host other than the exact pin is refused before any upload (CLOUD-04)
+    Given FacePhys presigns uploads to "uploads.evil.example"
     And the guest confirmed booking 501 with "guest@example.com"
     And the guest agreed to processing and email delivery
     When the guest starts the scan
     Then the kiosk shows the "failed" screen
     And no video was uploaded and no process request was sent
-
   Scenario: K-26 Any service at KRPM counts (Keith 10-19), so a service-8 booking at location 6 is accepted
     Given Calendesk has booking 503 at location 6 for service 8 on "2026-10-20" with status "approved" for "guest@example.com" and employee 12
     When the guest confirms booking 503 with "guest@example.com"
@@ -269,12 +252,15 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
 
   # Brakes (adversarial dogfood 10-19, A1/A4/A2). In-process: each serverless instance keeps its own counts.
 
+  # PR #10: the durable begin_check alone owns the cap, so a third check is refused at submit, before any FacePhys call.
   Scenario: K-29 One booking gets at most 2 charged checks a day: a retry after a poor reading, never a third
+    # Main 10-23 (T1 #175 §11.3): refused at code entry by a read-only eligibility check, before consent and camera.
     Given the guest already completed 2 checks for booking 501 today
-    When the guest confirms booking 501 with "guest@example.com"
+    When the guest enters the code for another check for booking 501
     Then the kiosk is refused with "BOOKING_ALREADY_CHECKED"
+    And the kiosk shows the "code" screen
     And the camera was not opened again
-    And no further process request reached FacePhys
+    And no further presign, upload or process request reached FacePhys
 
   Scenario: K-30 An attempt matched before the cap was reached is refused at the point of charge
     Given the guest holds a matched attempt for booking 501 from earlier
@@ -284,7 +270,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And no further process request reached FacePhys
 
   Scenario: K-31 In open mode one booking's checks never use up another guest's
-    Given production simplicity: no enrolment code, cookie secret, CARE roster or upload pin is configured
+    Given production minimum: no enrolment code, cookie secret or CARE roster is configured
     And Calendesk names employee 12 as "Aisyah" with "aisyah@example.com"
     And this kiosk tablet is not enrolled
     And 30 other bookings each completed a check on this kiosk in the last hour
@@ -327,7 +313,8 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
   Scenario: K-35 Knowing the email is not enough: wrong codes never open consent, and the fifth locks the code
     When the guest asks for a code with "guest@example.com"
     And the guest enters a wrong code 5 times
-    Then the kiosk is refused with "CODE_LOCKED"
+    # PR #10 closes the guessing oracle: every wrong code gets one reply, so the lock is seen only on the right code.
+    Then the kiosk is refused with "CODE_WRONG"
     When the guest enters the emailed code
     Then the kiosk is refused with "CODE_LOCKED"
     And the camera was never opened

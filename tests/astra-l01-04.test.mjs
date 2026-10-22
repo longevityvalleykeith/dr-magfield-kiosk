@@ -3,14 +3,15 @@ import assert from 'node:assert/strict'
 import { handleBooking } from '../lib/wellness/http.ts'
 import { KioskController } from '../lib/wellness/controller.ts'
 import { Brakes } from '../lib/wellness/limits.ts'
+import { MemoryStateStore } from '../lib/wellness/state-memory.ts'
 const EMAIL='synthetic@example.invalid'
 const NOW=new Date('2026-10-19T02:41:00Z')
 const full={id:9021,status:'approved',location:{id:48,location_id:6},service_id:16,employee_id:4,start_date:'2026-10-19',starts_at:'2026-10-19T04:00:00Z',user:{email:EMAIL}}
-const env={SCANS_ENABLED:'1',FACEPHYS_KEY_ID:'synthetic-key',FACEPHYS_SECRET_KEY:'synthetic-secret-isolated',CALENDESK_API_KEY:'synthetic-cd',RESEND_API_KEY:'synthetic-mail',CALENDESK_API_BASE:'https://calendar.invalid',EMAIL_API_BASE:'https://mail.invalid'}
+const env={SCANS_ENABLED:'1',FACEPHYS_KEY_ID:'synthetic-key',FACEPHYS_SECRET_KEY:'synthetic-secret-isolated',CALENDESK_API_KEY:'synthetic-cd',RESEND_API_KEY:'synthetic-mail',CALENDESK_API_BASE:'https://calendar.invalid',EMAIL_API_BASE:'https://mail.invalid',FACEPHYS_UPLOAD_HOSTS:'synthetic-bucket.s3.amazonaws.com',CONSENT_RETENTION_DAYS:'30',CONSENT_RETENTION_POLICY:'dmk-30-days-v1'}
 const json=x=>new Response(JSON.stringify(x),{status:200,headers:{'content-type':'application/json'}})
 function world(summary,detail=full){
  const calls={list:0,detail:0,mail:0};const events=[]
- const deps={env,now:()=>NOW,brakes:new Brakes(),log:(event,fields)=>events.push({event,fields}),fetch:async(input,init={})=>{
+ const deps={env,state:new MemoryStateStore(()=>NOW),now:()=>NOW,wait:async()=>{},brakes:new Brakes(),log:(event,fields)=>events.push({event,fields}),fetch:async(input,init={})=>{
   const u=new URL(String(input))
   if(u.hostname==='calendar.invalid'&&u.pathname.endsWith('/v2')){calls.list++;return json({data:[summary],last_page:1})}
   if(u.hostname==='calendar.invalid'&&u.pathname.endsWith('/9021')){calls.detail++;return json({data:detail})}

@@ -17,6 +17,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
+      - name: Durable state adversarial cases (includes held RT02)
+        run: node --test tests/astra-rt01-05.test.mjs tests/state-durable.test.mjs
       # The censuses read the built chunks, so build first (no env: the check stays off).
       - run: npm run build
       - run: npm test
