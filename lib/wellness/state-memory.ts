@@ -65,7 +65,8 @@ export class MemoryStateStore implements StateStore {
         // Reads only. begin_check's atomic cap remains the race barrier.
         if (command.day !== today) return reply('invalid')
         const day = this.days.get(command.dayRef)
-        return reply(day && day.slots >= 2 ? 'capped' : 'granted')
+        if (!day || day.slots < 2) return reply('granted')
+        return reply(day.active !== null ? 'pending' : 'capped')
       }
       case 'claim_code': {
         const challenge = this.challenges.get(command.challengeId)

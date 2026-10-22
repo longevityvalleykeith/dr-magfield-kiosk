@@ -143,6 +143,8 @@ declare
   v_c kiosk.wellness_challenge%rowtype;
   v_a kiosk.wellness_attempt%rowtype;
   v_record kiosk.consent_record%rowtype;
+  v_spent integer;
+  v_active uuid;
 begin
   -- PostgREST verifies the JWT signature and supplies these trusted request claims.
   -- current_user is the definer here and MUST NOT be used as caller authority.
@@ -322,10 +324,12 @@ begin
     if v_day <> (v_now at time zone 'Asia/Kuala_Lumpur')::date then
       return '{"kind":"invalid"}'::jsonb;
     end if;
-    if exists (select 1 from kiosk.wellness_day d where d.day_ref = v_day_ref and d.checks_spent >= 2) then
-      return '{"kind":"capped"}'::jsonb;
-    end if;
-    return '{"kind":"granted"}'::jsonb;
+    select d.checks_spent, d.active_attempt_id into v_spent, v_active
+      from kiosk.wellness_day d where d.day_ref = v_day_ref;
+    if not found or v_spent < 2 then return '{"kind":"granted"}'::jsonb; end if;
+    -- At the cap a hold answers first, in begin_check's order.
+    if v_active is not null then return '{"kind":"pending"}'::jsonb; end if;
+    return '{"kind":"capped"}'::jsonb;
   end if;
 
   -- Resolve the day without locking, then always lock day before challenge/attempt.

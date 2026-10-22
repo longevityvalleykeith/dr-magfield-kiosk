@@ -12,3 +12,5 @@ Run only root after freshcapacity>=17GiBdisk/1GiBswap, atomicAIR-RUNTIME.lock ac
 6. Currentdefault npmtest excludesRT02 byname. Fullcreditrequiresremoving thattemporary exclusion only afterexactheldtestGREEN; test:held executionmustberecordedseparately. Prepared filepresence/defaultzero-skipsarenotexecutionproof.
 
 Namedoutstandinggates: Maintransport/publicfacade+publishableapikey/compositeshapeamendment; SQLnormalmigrationplacement; freshauthorbarredreview; exactfinalshapeRED/GREEN; independentSQLreplay; Main'sseparategrade; Keith'snamedmigrationapplyandshortlivedJWT/protectedconfiguration; counselnotice/vendoradmissionandownfacetest; explicitreopen. Guestscanspausedand#225executorunchanged. NoresultemaildeliveryorproductionE2Eclaimed.
+
+K12b (2026-10-23, Mini as author): `kiosk_wellness_state.eligibility-probe.sql` was executed on a disposable local PostgreSQL 15.18 cluster, against a replay copy without pg_cron. It covers only the read-only `check_eligibility` branch, and it carries its own result and a positive control. This does not replace the independent SQL replay named above.

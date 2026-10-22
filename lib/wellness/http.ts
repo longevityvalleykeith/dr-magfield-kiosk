@@ -235,10 +235,13 @@ export async function handleVerify(req: Request, deps: Deps): Promise<Response> 
   const dayRef = bookingDayRef(secret, config, found.booking.id, day)
   // K-29: an exhausted booking is refused here, before consent and camera, by a read-only check. The code goes back
   // to its owner untouched. begin_check's atomic cap stays the race barrier (K-30).
-  // Verification intentionally does not refuse an active day hold (RT04); begin_check alone owns that admission.
+  // A hold under the cap still verifies (RT04); at the cap the hold answers first, in begin_check's order (K12b F3).
   const eligible = await transition(state, { kind: 'check_eligibility', dayRef, day })
   if (eligible.kind !== 'granted') {
-    await transition(state, { kind: 'release_code', challengeId: ch.challengeId, owner })
+    const released = await transition(state, { kind: 'release_code', challengeId: ch.challengeId, owner })
+    // The reply stays truthful either way; an unreleased code only costs the guest a fresh one (K12b F2).
+    if (released.kind !== 'released') deps.log('code_release_unacknowledged', {})
+    if (eligible.kind === 'pending') return refuse(409, 'CHECK_PENDING')
     if (eligible.kind === 'capped') return refuse(409, 'BOOKING_ALREADY_CHECKED')
     return refuse(503, 'STATE_UNAVAILABLE')
   }

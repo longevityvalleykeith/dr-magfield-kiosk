@@ -28,7 +28,7 @@ type OwnedCode = { challengeId: string; owner: string }
 type OwnedCheck = { attemptId: string; dayRef: string; owner: string }
 export type StateCommand =
   | { kind: 'take_code'; challengeId: string; dayRef: string; day: string }
-  /** Read-only: may this booking-day still begin a check? Refuses an exhausted booking before consent and camera (K-29). */
+  /** Read-only: may this booking-day still begin a check? Refuses an exhausted booking before consent and camera (K-29); at the cap a hold answers 'pending'. */
   | { kind: 'check_eligibility'; dayRef: string; day: string }
   | ({ kind: 'claim_code'; correct: boolean } & OwnedCode)
   | ({ kind: 'release_code' } & OwnedCode)
