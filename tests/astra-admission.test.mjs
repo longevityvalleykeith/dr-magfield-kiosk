@@ -60,8 +60,10 @@ const deniedConfigurations = [
     arrange: (deps) => { delete deps.env.FACEPHYS_UPLOAD_HOSTS },
   },
   {
-    name: 'an Aliyun upload pin',
-    arrange: (deps) => { deps.env.FACEPHYS_UPLOAD_HOSTS = 'facephys-kiosk.oss-ap-southeast-1.aliyuncs.com' },
+    // Keith 10-22 admitted Alibaba Cloud: an exact OSS bucket host is a valid pin (tests/k10-alibaba-admission).
+    // A bare Alibaba endpoint, with no bucket, is still not one exact storage host.
+    name: 'a bare Aliyun endpoint pin',
+    arrange: (deps) => { deps.env.FACEPHYS_UPLOAD_HOSTS = 'oss-ap-southeast-1.aliyuncs.com' },
   },
   {
     name: 'multiple otherwise admitted upload pins',
