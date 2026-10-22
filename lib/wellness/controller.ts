@@ -61,6 +61,7 @@ export const MESSAGES: Record<string, string> = {
   BOOKING_CHANGED: 'Your booking changed since you confirmed it. Please start again.',
   DEVICE_NOT_ENROLLED: 'This tablet isn’t set up for wellness checks. Please ask the CARE team.',
   CHECK_DISABLED: 'The wellness check isn’t available right now. Your visit continues as normal.',
+  CHECK_PAUSED: 'The wellness check is paused for now. Your visit continues as normal, and you can go back to your booking.',
   CONSENT_REQUIRED: 'Please tick both boxes to continue, or choose No thanks.',
   RECIPIENT_UNAVAILABLE: 'That CARE team member can’t be copied right now. You can continue without the CC.',
   VIDEO_UNSUPPORTED: 'This tablet can’t record a video the analysis can use. Your visit continues as normal.',

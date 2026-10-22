@@ -124,9 +124,24 @@ Routing the consent record into Foundry's receipts is **deferred** (Keith). Unti
 - `KIOSK_ENROLL_CODE` (16+ characters) requires one-time set-up per tablet. Without it, every check is still gated by today's booking match, a typed booking email and the kill switch.
 - `KIOSK_COOKIE_SECRET` sets an independent signing key.
 
-**Other optional settings:** `CONSENT_RECORD_TO`, `CONSENT_RETENTION_POLICY`/`CONSENT_RETENTION_DAYS`, `ALLOW_MISSING_QUALITY`, `SAME_KEY_RETRY`, `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE`, `KIOSK_TENANT`.
+**Other optional settings:** `CONSENT_RECORD_TO`, `CONSENT_RETENTION_POLICY`/`CONSENT_RETENTION_DAYS`, `ALLOW_MISSING_QUALITY`, `SAME_KEY_RETRY`, `SCAN_SECONDS`, `MIN_SIGNAL_QUALITY`, `KIOSK_LOCATION_ID`, `KIOSK_SERVICE_IDS`, `KIOSK_OUTLET`, `KIOSK_OUTLET_NAME`, `KIOSK_TIME_ZONE`, `KIOSK_TENANT`, `KIOSK_BOOKING_URL` (the paused page's way back to booking: absolute https on longevityvalley.ai only, default `https://book.longevityvalley.ai`).
 
 **Check the setup without a charge:** open `/api/wellness/health?probe=facephys`. In open mode anyone can run it, at most 10 times a minute per instance; in enrolled mode only an enrolled tablet can. It returns booleans; FacePhys `auth/test`; a free presign preflight giving `uploadHost` (hostname only), `uploadHostAllowed` and `uploadPolicy`; and `calendeskAuth`. It never returns a signed URL or any value.
+
+## Paused state and the re-open checklist (binding order)
+
+**Paused now** (`SCANS_ENABLED=0`; Main 10-19 §6 ruling 1, re-affirmed in #175 A1). `/scan` shows "Wellness check paused", the visit continues as normal, and a **Back to booking** link (BS-00, K1). There is no OTP, consent, camera or result action. Arrivals are counted as `qr_open` with `src` = `qr` (the standee) or `lvqr` (LV's old printed QR, 308-redirected from `app.longevityvalley.ai/scan/dr-magfield/krpm`). When `lvqr` reaches zero, LV's redirect can retire (10-19 §7.4). **A merge does not re-open scans.**
+
+**Re-open, in this order.** This follows the full 10-19 §6–§9 sequence that #175 A1 incorporates. Where #175's compressed list differs, the full order holds (T1 #173 rev 1.9.3; Mini ACK C6). Each step is a separate proof:
+1. **Durable state:** kiosk PR #10 (specialist author) is graded and applied by its named authority, with exact-byte, privilege and deletion readbacks and negative probes.
+2. **RT02, RT03, RT04 each GREEN** against that store (RT02 is held today: `npm run test:held`).
+3. **Consent copy:** "LV keeps a minimal consent record (no video, no readings) for 30 days" (Keith 10-19). Counsel's review of the wording is owed.
+4. **Upload host:** Keith admitted **Alibaba Cloud OSS** on 10-22, adding it to R2/S3/GCS. Read the exact presign host with the free preflight, pin that exact host (not `dynamic`), read the pin back, and measure the processing region and the PDPA transfer basis. This all comes **before** the formal grade.
+5. **CC off** until a KRPM-only roster exists.
+6. **Main and Astra regrade the exact commit**, after Astra's existing queue.
+7. **Before any re-open, Keith decides:** cloud or on-device (A3b; Foundry's notice still promises on-device), and the REN→KRPM outlet mapping (A4). With cloud, the Foundry notice amendment ships **in the same release** as the re-open, and the served notice and the served kiosk must agree (BS-13).
+8. **Keith's own-face test** on KRPM service 16, 8 or 13, **never 14**.
+9. **Keith's re-open word.** Only then is Calendesk's button repointed. Until then it is hidden or relabelled.
 
 ## Clause map against T1 #164
 

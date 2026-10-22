@@ -28,6 +28,8 @@ export interface WellnessConfig {
   minQuality: number
   allowMissingQuality: boolean
   sameKeyRetry: boolean
+  /** Where a guest goes back to book or check their visit (BS-00): absolute https on longevityvalley.ai only. */
+  bookingUrl: string
 }
 
 const text = (v: string | undefined): string => (v ?? '').trim()
@@ -52,6 +54,19 @@ function baseDomain(baseUrl: string): string | null {
 const int = (v: string | undefined, fallback: number): number => {
   const n = Number.parseInt(text(v), 10)
   return Number.isSafeInteger(n) && n > 0 ? n : fallback
+}
+
+export const DEFAULT_BOOKING_URL = 'https://book.longevityvalley.ai'
+
+/** An override must be absolute https on longevityvalley.ai (or a subdomain); anything else keeps the default. */
+function bookingUrlFrom(raw: string | undefined): string {
+  const v = text(raw)
+  if (!v) return DEFAULT_BOOKING_URL
+  try {
+    const u = new URL(v)
+    const host = u.hostname.toLowerCase()
+    return u.protocol === 'https:' && (host === 'longevityvalley.ai' || host.endsWith('.longevityvalley.ai')) && !u.username && !u.password ? u.toString().replace(/\/$/, '') : DEFAULT_BOOKING_URL
+  } catch { return DEFAULT_BOOKING_URL }
 }
 
 export function readConfig(env: Env): WellnessConfig {
@@ -96,6 +111,7 @@ export function readConfig(env: Env): WellnessConfig {
     allowMissingQuality: text(env.ALLOW_MISSING_QUALITY) === '1',
     // Off by default: an unknown outcome stops and is reconciled. Turn on only once the vendor's same-key replay is measured.
     sameKeyRetry: text(env.SAME_KEY_RETRY) === '1',
+    bookingUrl: bookingUrlFrom(env.KIOSK_BOOKING_URL),
   }
 }
 

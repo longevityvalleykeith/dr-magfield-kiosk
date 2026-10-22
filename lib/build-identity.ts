@@ -13,7 +13,8 @@ export type BuildIdentity = {
 }
 
 export function buildIdentity(env: Env = {}): BuildIdentity {
-  const sha = (env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ?? '').trim()
+  // The build-time variable first; the runtime one lets a dynamic page (/scan) state its build too.
+  const sha = (env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ?? '').trim() || (env.VERCEL_GIT_COMMIT_SHA ?? '').trim()
   const deploy = (env.VERCEL_ENV ?? '').trim()
   return {
     tool: 'drm-standee',
