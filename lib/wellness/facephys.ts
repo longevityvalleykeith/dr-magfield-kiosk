@@ -34,7 +34,7 @@ export function normalizeUploadUrl(url: string): string {
 
 /**
  * CLOUD-04: the origin must be HTTPS with an exact configured hostname, no credentials or custom port.
- * Configuration admission separately restricts that one pin to R2/S3/GCS. No suffix or loopback exception.
+ * Configuration admission separately restricts that one pin to R2/S3/GCS or Alibaba OSS. No suffix or loopback exception.
  */
 export function uploadHostAllowed(uploadUrl: string, cfg: Pick<FacePhys, 'baseUrl' | 'uploadHosts'>): string | null {
   let u: URL

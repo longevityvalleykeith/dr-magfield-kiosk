@@ -41,10 +41,14 @@ const text = (v: string | undefined): string => (v ?? '').trim()
 export const DEFAULT_CALENDESK_TENANT = 'zqlc6ablyz'
 /** The sender Foundry already uses on LV's Resend domain. */
 export const DEFAULT_EMAIL_FROM = 'DR MAGfield <noreply@longevityvalley.ai>'
-/** One exact hostname on the admitted storage families. A provider suffix is never a wildcard pin. */
+/**
+ * One exact hostname on the admitted storage families: R2/S3/GCS (Keith 10-19 §8) and Alibaba OSS (Keith 10-22).
+ * A provider suffix is never a wildcard pin. Alibaba: one bucket on a public regional or accelerate endpoint.
+ */
 export function admittedUploadHost(host: string): boolean {
   if (host.length > 253 || !host.split('.').every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) return false
-  return /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.r2\.cloudflarestorage\.com$/.test(host)
+  return /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.oss-(?:accelerate|accelerate-overseas|[a-z]{2}-[a-z]+(?:-[0-9]+)?)\.aliyuncs\.com$/.test(host)
+    || /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.r2\.cloudflarestorage\.com$/.test(host)
     || /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/.test(host)
     || host === 'storage.googleapis.com'
     || /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.storage\.googleapis\.com$/.test(host)
