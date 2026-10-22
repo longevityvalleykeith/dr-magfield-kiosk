@@ -717,6 +717,10 @@ R.When(/^the guest completes another check for booking (\d+)$/, async (w, id) =>
   w.process.push({ type: 'ok', body: OK }); w.processIndex = w.process.length - 1
   await w.controller.startScan()
 })
+R.When(/^the guest enters the code for another check for booking (\d+)$/, async (w, id) => {
+  w.controller.reset()
+  await confirm(w, id, w.bookings.get(Number(id)).user.email)
+})
 R.Given(/^Calendesk lists bookings without their location$/, (w) => { w.listOmitsLocation = true })
 R.When(/^a lookup names booking (\d+) with "([^"]+)"$/, async (w, id, email) => { await w.api().booking({ bookingId: id, email }) })
 R.Then(/^both lookups were held to the same reply time$/, (w) => {

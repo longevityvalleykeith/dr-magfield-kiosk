@@ -254,9 +254,12 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
 
   # PR #10: the durable begin_check alone owns the cap, so a third check is refused at submit, before any FacePhys call.
   Scenario: K-29 One booking gets at most 2 charged checks a day: a retry after a poor reading, never a third
+    # Main 10-23 (T1 #175 §11.3): refused at code entry by a read-only eligibility check, before consent and camera.
     Given the guest already completed 2 checks for booking 501 today
-    When the guest completes another check for booking 501
-    Then the scan is refused with "BOOKING_ALREADY_CHECKED"
+    When the guest enters the code for another check for booking 501
+    Then the kiosk is refused with "BOOKING_ALREADY_CHECKED"
+    And the kiosk shows the "code" screen
+    And the camera was not opened again
     And no further presign, upload or process request reached FacePhys
 
   Scenario: K-30 An attempt matched before the cap was reached is refused at the point of charge
