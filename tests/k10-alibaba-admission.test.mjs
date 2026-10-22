@@ -21,7 +21,8 @@ test('K10-02 anything that is not one Alibaba bucket on a public OSS endpoint is
     'bucket.oss-cn-hangzhou-internal.aliyuncs.com', // VPC-internal endpoint
     'a.b.oss-ap-southeast-1.aliyuncs.com', // a dotted "bucket" is not a bucket
     'bucket.oss-ap-southeast-1.aliyuncs.com.evil.example', 'bucket.oss-accelerate.aliyuncs.co', 'bucket.ecs.aliyuncs.com',
-    'b.oss-accelerate.aliyuncs.com', // a bucket name is at least 3 characters
+    'b.oss-accelerate.aliyuncs.com', 'ab.oss-accelerate.aliyuncs.com', // a bucket name is at least 3 characters
+    'x.bucket.oss-ap-southeast-1.aliyuncs.com', // a host under a bucket is not the bucket
     '-bucket.oss-accelerate.aliyuncs.com', 'bucket-.oss-accelerate.aliyuncs.com', 'Bucket.oss-accelerate.aliyuncs.com',
   ]) assert.equal(admittedUploadHost(h), false, h)
 })
