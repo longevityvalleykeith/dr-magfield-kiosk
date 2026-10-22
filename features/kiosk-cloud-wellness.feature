@@ -267,7 +267,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And the guest already completed 2 checks for booking 501 today
     When the held attempt is submitted
     Then the scan is refused with "BOOKING_ALREADY_CHECKED"
-    And no further process request reached FacePhys
+    And no further presign, upload or process request reached FacePhys
 
   Scenario: K-31 In open mode one booking's checks never use up another guest's
     Given production minimum: no enrolment code, cookie secret or CARE roster is configured

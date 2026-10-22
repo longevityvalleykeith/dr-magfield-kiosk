@@ -101,7 +101,7 @@ test('K12-04 K-29: an exhausted booking is refused at code entry, before consent
   assert.equal(w.effects.upload, before.upload)
 })
 
-test('K12-05 K-29: the eligibility check is read-only and only answers granted or capped', async () => {
+test('K12-05 K-29: the eligibility check is read-only and only answers granted, capped or pending', async () => {
   const { parseStateCommand, parseStateReply } = await import('../lib/wellness/state-validation.ts')
   const dayRef = 'a'.repeat(64)
   const cmd = { kind: 'check_eligibility', dayRef, day: '2026-10-19' }
@@ -109,7 +109,9 @@ test('K12-05 K-29: the eligibility check is read-only and only answers granted o
   assert.equal(parseStateCommand({ ...cmd, owner: '00000000-0000-4000-8000-000000000000' }), null, 'extra keys are refused')
   assert.deepEqual(parseStateReply('check_eligibility', { kind: 'granted' }), { kind: 'granted' })
   assert.deepEqual(parseStateReply('check_eligibility', { kind: 'capped' }), { kind: 'capped' })
-  for (const k of ['consumed', 'authorized', 'pending', 'released']) assert.equal(parseStateReply('check_eligibility', { kind: k }), null, k)
+  // K12b F3: 'pending' (held at the cap) is also an eligibility answer.
+  assert.deepEqual(parseStateReply('check_eligibility', { kind: 'pending' }), { kind: 'pending' })
+  for (const k of ['consumed', 'authorized', 'released']) assert.equal(parseStateReply('check_eligibility', { kind: k }), null, k)
   // Asking spends nothing: after an extra verified attempt (one more eligibility read), two checks still complete.
   // Three codes is the booking's daily allowance, so this uses all three.
   const w = world()
