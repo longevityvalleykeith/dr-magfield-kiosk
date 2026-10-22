@@ -85,7 +85,7 @@ const fetchApi: KioskApi = {
   },
 }
 
-export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boolean; scanSeconds: number; outletName: string }) {
+export default function Kiosk({ ready, scanSeconds, outletName, bookingUrl }: { ready: boolean; scanSeconds: number; outletName: string; bookingUrl: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const ctl = useRef<KioskController | null>(null)
   if (ctl.current === null) ctl.current = new KioskController({ api: fetchApi, media: browserMedia(() => videoRef.current), scanSeconds })
@@ -128,7 +128,17 @@ export default function Kiosk({ ready, scanSeconds, outletName }: { ready: boole
   const bump = () => setTouch((n) => n + 1)
 
   if (!ready) {
-    return <main className={styles.shell}><section className={styles.card}><h1 className={styles.title}>Wellness check</h1><p className={styles.lead}>{MESSAGES.CHECK_DISABLED}</p></section></main>
+    // BS-00: paused, truthfully, with a way back to booking. No OTP, consent, camera or result action exists here.
+    return (
+      <main className={styles.shell}>
+        <section className={styles.card}>
+          <p className={styles.kicker}>{outletName}</p>
+          <h1 className={styles.title}>Wellness check paused</h1>
+          <p className={styles.lead}>{MESSAGES.CHECK_PAUSED}</p>
+          <div className={styles.row}><a className={styles.primary} href={bookingUrl} rel="noopener noreferrer">Back to booking</a></div>
+        </section>
+      </main>
+    )
   }
 
   return (

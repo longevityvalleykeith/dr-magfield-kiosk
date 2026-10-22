@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { readConfig, isReady } from '@/lib/wellness/config.ts'
+import { arrivalSource } from '@/lib/wellness/arrival.ts'
 import Kiosk from './Kiosk'
 
 // Read at request time, so turning SCANS_ENABLED off takes effect without a rebuild.
@@ -12,8 +13,10 @@ export const metadata: Metadata = {
 
 export default function ScanPage({ searchParams }: { searchParams?: { src?: string } }) {
   const config = readConfig(process.env)
-  // The standee QR carries ?src=qr. A count only: no address, device or person (it replaces EV-1's receipt for this QR).
-  if (searchParams?.src === 'qr') console.info(JSON.stringify({ scope: 'wellness', event: 'qr_open' }))
-  // Only these three non-secret values cross into the client bundle.
-  return <Kiosk ready={isReady(config)} scanSeconds={config.scanSeconds} outletName={config.outlet.name} />
+  // Both QRs are counted (the standee's ?src=qr and LV's old printed QR, redirected with ?src=lvqr). A count only:
+  // no address, device or person. When lvqr reaches zero, LV's redirect can retire (Main 10-19 §7.4).
+  const arrival = arrivalSource(searchParams?.src)
+  if (arrival) console.info(JSON.stringify({ scope: 'wellness', event: 'qr_open', src: arrival }))
+  // Only these non-secret values cross into the client bundle.
+  return <Kiosk ready={isReady(config)} scanSeconds={config.scanSeconds} outletName={config.outlet.name} bookingUrl={config.bookingUrl} />
 }

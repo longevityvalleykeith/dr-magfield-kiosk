@@ -104,6 +104,10 @@ export default function StandeePage() {
 
   return (
     <main className={styles.standee}>
+      {/* The standee's own typefaces, only on this page (the root layout carries none, so /scan loads no third-party fonts). */}
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Manrope:wght@300;400;500;600;700&family=Montserrat:wght@400;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
       <header className={styles.header}>
         <div className={styles.brand}>
           <span className={styles.mark}>
