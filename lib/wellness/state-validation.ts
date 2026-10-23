@@ -104,7 +104,7 @@ export function parseStateCommand(value: unknown): StateCommand | null {
 }
 
 const REPLIES: Record<StateCommand['kind'], readonly StateKind[]> = {
-  take_code: ['granted', 'capped'], check_eligibility: ['granted', 'capped'], claim_code: ['granted', 'wrong', 'locked'],
+  take_code: ['granted', 'capped'], check_eligibility: ['granted', 'capped', 'pending'], claim_code: ['granted', 'wrong', 'locked'],
   release_code: ['released', 'stale'], consume_code: ['consumed', 'locked', 'stale'],
   begin_check: ['granted', 'capped', 'pending', 'stale'], authorize_process: ['authorized', 'stale'],
   release_check: ['released', 'stale'], finish_check: ['finished', 'stale'],
