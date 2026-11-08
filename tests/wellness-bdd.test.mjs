@@ -415,7 +415,9 @@ R.Then(/^the kiosk shows the "result" screen with heart rate (\d+) bpm and the e
 const CONSENT_FIELDS = ['bookingRef', 'calendeskAccountRef', 'careCcDecision', 'careEmployeeId', 'careRecipientRef', 'emailResultsDecision', 'guestRecipientRef',
   'locationId', 'noticeVersion', 'processingDecision', 'purpose', 'retentionPolicyVersion', 'schemaVersion', 'serviceId', 'serviceLocationId', 'serviceTypeId',
   'sourceSurface', 'subjectBinding', 'tenantId', 'verificationCheckedAt', 'verificationPolicyVersion']
-R.Then(/^the consent record holds only the admitted fields, with Calendesk location (\d+), CARE employee (\d+), the CC "([a-z]+)" and no email address or reading$/, (w, loc, emp, cc) => {
+// G4 (T1 #216 c.6721645036 Decision B; Keith's R1.5 rule "no staff id in any consent record", every surface):
+// the key stays in dmk-consent-v3 for the reviewed SQL, but its value is always null.
+R.Then(/^the consent record holds only the admitted fields, with Calendesk location (\d+), no staff id, the CC "([a-z]+)" and no email address or reading$/, (w, loc, cc) => {
   const records = w.records()
   assert.equal(records.length, 1)
   const r = records[0].intent
@@ -425,7 +427,7 @@ R.Then(/^the consent record holds only the admitted fields, with Calendesk locat
   assert.match(r.bookingRef, /^[0-9a-f]{64}$/, 'the booking is a keyed reference, never the raw ID')
   assert.equal(r.locationId, +loc)
   assert.equal(r.serviceLocationId, 9006, 'serviceLocationId comes from location.id, never from locationId')
-  assert.equal(r.careEmployeeId, +emp)
+  assert.equal(r.careEmployeeId, null, 'a staff id entered the consent record')
   assert.equal(r.careCcDecision, cc)
   assert.equal(r.careRecipientRef, null)
   assert.equal(r.subjectBinding, 'booking-inbox-code-v1', 'the code proves the inbox, not the person')
@@ -434,9 +436,10 @@ R.Then(/^the consent record holds only the admitted fields, with Calendesk locat
   assert.ok(!JSON.stringify(r).includes('@'), 'an email address entered the record')
   assert.ok(!/[:[,]\s*(72|41|55|0\.9)\b/.test(JSON.stringify({ ...r, careEmployeeId: null, locationId: null, serviceId: null, serviceLocationId: null })), 'a reading entered the record')
 })
-R.Then(/^the consent record keeps CARE employee (\d+) with the CC "([a-z]+)"$/, (w, emp, decision) => {
+R.Then(/^the consent record holds no staff id, though the booking names employee (\d+), with the CC "([a-z]+)"$/, (w, emp, decision) => {
   const [{ intent: r }] = w.records()
-  assert.equal(r.careEmployeeId, +emp)
+  assert.equal(r.careEmployeeId, null, `booking employee ${emp} entered the consent record`)
+  assert.ok(!JSON.stringify(r).includes(`:${emp},`) && !JSON.stringify(r).endsWith(`:${emp}}`), 'the staff id appears under another key')
   assert.equal(r.careCcDecision, decision)
   assert.equal(r.careRecipientRef, null)
 })

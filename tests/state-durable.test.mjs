@@ -193,3 +193,11 @@ test('DI08 wrong-code replies do not reveal registered, decoy or five-guess lock
  assert.deepEqual(wa,Array(6).fill(2500));assert.deepEqual(wb,[2500])
  assert.equal((await handleVerify(post('/verify',c),a.deps)).status,429,'Actual five-guess lock was weakened')
 })
+
+// G4 (T1 #216 Decision B): the store refuses a consent intent that carries a staff id; null is the only admitted value.
+test('G4-02 begin_check with a non-null careEmployeeId is refused at the boundary; null is admitted',async()=>{
+ const {parseStateCommand}=await import('../lib/wellness/state-validation.ts')
+ const cmd=(careEmployeeId)=>({kind:'begin_check',attemptId:uid(),dayRef,owner:uid(),intent:{...intent(),careEmployeeId}})
+ assert.notEqual(parseStateCommand(cmd(null)),null)
+ for(const v of [12,1,Number.MAX_SAFE_INTEGER])assert.equal(parseStateCommand(cmd(v)),null,`careEmployeeId ${v} was admitted`)
+})

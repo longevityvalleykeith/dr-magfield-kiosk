@@ -60,7 +60,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And exactly 1 email was sent to "guest@example.com" with no CC
     And the email says "wellness indicator, not a medical measurement"
     And the kiosk shows the "result" screen with heart rate 72 bpm and the email as sent
-    And the consent record holds only the admitted fields, with Calendesk location 6, CARE employee 12, the CC "declined" and no email address or reading
+    And the consent record holds only the admitted fields, with Calendesk location 6, no staff id, the CC "declined" and no email address or reading
     And the consent record was finished as "completed" with the email "sent"
   Scenario: K-06 No CC is offered while staff copies are off, so the guest has nothing to tick (O2O-05)
     When the guest confirms booking 501 with "guest@example.com"
@@ -69,7 +69,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     And FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest starts the scan
     Then exactly 1 email was sent to "guest@example.com" with no CC
-    And the consent record keeps CARE employee 12 with the CC "declined"
+    And the consent record holds no staff id, though the booking names employee 12, with the CC "declined"
   Scenario: K-07 A forged CC on the scan request is never honoured, and never blocks the guest's check (O2O-04)
     Given FacePhys will return heart rate 70, RMSSD 40, SDNN 50 and breathing rate 15 with signal quality 0.9
     When the guest confirms booking 501 with "guest@example.com"
@@ -77,7 +77,7 @@ Feature: DR MAGfield KRPM kiosk: an optional, booking-matched Cloud wellness che
     When the guest forces a CC on the scan request
     Then exactly 1 email was sent to "guest@example.com" with no CC
     And the scan reply reports the CC as "unavailable"
-    And the consent record keeps CARE employee 12 with the CC "unavailable"
+    And the consent record holds no staff id, though the booking names employee 12, with the CC "unavailable"
   Scenario: K-17 A configured CARE roster keeps the check off until a KRPM-only roster is admitted (Keith 10-19 §8)
     Given the CARE roster lists employee 12 "Aisyah" with "aisyah@example.com" as active at "krpm"
     When the guest confirms booking 501 with "guest@example.com"

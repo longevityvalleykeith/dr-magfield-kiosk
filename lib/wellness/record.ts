@@ -1,7 +1,7 @@
 /**
  * Minimal durable consent intent, committed with begin_check before the first FacePhys call.
  * The database owns recorded/deletion timestamps and the fixed 30-day retention period.
- * No raw booking ID, email, reading, video, provider payload or signed URL enters this object.
+ * No raw booking ID, email, staff id, reading, video, provider payload or signed URL enters this object.
  * Inbox-code control does not identify the face. Provider/mail acknowledgement does not prove delivery.
  */
 import { hmacHex } from './crypto.ts'
@@ -28,7 +28,7 @@ const positive = (n: number | null): n is number => n !== null && Number.isSafeI
 /** Missing mandatory Calendesk context prevents admission rather than inventing an ID. */
 export function consentIntent(secret: string, f: RecordInput): ConsentIntent | null {
   if (!positive(f.booking.locationId) || !positive(f.booking.serviceId)) return null
-  for (const n of [f.booking.serviceLocationId, f.booking.serviceTypeId, f.booking.employeeId]) {
+  for (const n of [f.booking.serviceLocationId, f.booking.serviceTypeId]) {
     if (n !== null && !positive(n)) return null
   }
   return {
@@ -40,7 +40,9 @@ export function consentIntent(secret: string, f: RecordInput): ConsentIntent | n
     serviceLocationId: f.booking.serviceLocationId,
     serviceId: f.booking.serviceId,
     serviceTypeId: f.booking.serviceTypeId,
-    careEmployeeId: f.booking.employeeId,
+    // G4 (T1 #216 Decision B): Keith's R1.5 rule, no staff id in any consent record. The key stays
+    // for the reviewed dmk-consent-v3 SQL; its value is always null. The booking's employee is never read here.
+    careEmployeeId: null,
     subjectBinding: 'booking-inbox-code-v1',
     purpose: 'optional-wellness-indicators-cloud-v3',
     noticeVersion: f.noticeVersion,

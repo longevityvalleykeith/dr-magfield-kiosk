@@ -42,7 +42,7 @@ function parseIntent(value: unknown): ConsentIntent | null {
     || value.schemaVersion !== 'dmk-consent-v3' || !isRef(value.bookingRef)
     || typeof value.tenantId !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.tenantId) || value.tenantId.length > 64
     || !isRef(value.calendeskAccountRef) || !isId(value.locationId) || !isNullableId(value.serviceLocationId)
-    || !isId(value.serviceId) || !isNullableId(value.serviceTypeId) || !isNullableId(value.careEmployeeId)
+    || !isId(value.serviceId) || !isNullableId(value.serviceTypeId) || value.careEmployeeId !== null
     || value.subjectBinding !== 'booking-inbox-code-v1' || value.purpose !== 'optional-wellness-indicators-cloud-v3'
     || value.noticeVersion !== 'dmk-cloud-v3-2026-10-19' || value.processingDecision !== 'agreed'
     || value.emailResultsDecision !== 'agreed' || (value.careCcDecision !== 'declined' && value.careCcDecision !== 'unavailable')
@@ -53,7 +53,7 @@ function parseIntent(value: unknown): ConsentIntent | null {
     schemaVersion: value.schemaVersion, bookingRef: value.bookingRef, tenantId: value.tenantId,
     calendeskAccountRef: value.calendeskAccountRef, locationId: value.locationId,
     serviceLocationId: value.serviceLocationId, serviceId: value.serviceId, serviceTypeId: value.serviceTypeId,
-    careEmployeeId: value.careEmployeeId, subjectBinding: value.subjectBinding, purpose: value.purpose,
+    careEmployeeId: null, subjectBinding: value.subjectBinding, purpose: value.purpose,
     noticeVersion: value.noticeVersion, processingDecision: value.processingDecision,
     emailResultsDecision: value.emailResultsDecision, careCcDecision: value.careCcDecision,
     guestRecipientRef: value.guestRecipientRef, careRecipientRef: value.careRecipientRef,
