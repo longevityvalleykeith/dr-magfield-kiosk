@@ -5,7 +5,8 @@
  *   per tablet at /scan/enroll. Without it, no booking is read and no scan is sent. It is never a
  *   NEXT_PUBLIC token: W-4b withdrew the LV kiosk because its device token was inlined into the page.
  * - **Attempt token** (15 minutes). It binds one booking match to one guest email (a keyed hash,
- *   never the address) and to the booking's CARE employee ID. The scan cannot swap any of them.
+ *   never the address). The scan cannot swap either. It carries no staff id (G4, Keith's R1.5 rule):
+ *   its CARE employee field is always null.
  *   Its attempt ID is the FacePhys idempotency key.
  * - **Code challenge** (10 minutes). It carries a keyed hash of the 6-digit code emailed to the booking's inbox, never the
  *   code itself, so the page cannot read the code back. Shared durable state stores the opaque challenge ID,
