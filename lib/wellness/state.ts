@@ -8,7 +8,8 @@ export interface ConsentIntent {
   serviceLocationId: number | null
   serviceId: number
   serviceTypeId: number | null
-  careEmployeeId: number | null
+  /** G4: always null; no staff id in any consent record (Keith's R1.5 rule). */
+  careEmployeeId: null
   subjectBinding: 'booking-inbox-code-v1'
   purpose: 'optional-wellness-indicators-cloud-v3'
   noticeVersion: string
