@@ -29,10 +29,10 @@ export function productFiles() {
 }
 
 // A staff-id key given any value other than null: `careEmployeeId: x`, `staffId = x`, `c: a.careEmployeeId`.
-const STAFF_KEY_WRITE = /\b(careEmployeeId|care_employee_id|staffId|staff_id)\s*[:=]\s*(?!null\b)(?!number\b)(?!string\b)\S/
+const STAFF_KEY_WRITE = /\b(careEmployeeId|care_employee_id|careEmailHash|staffId|staff_id)\s*[:=]\s*(?!null\b)(?!number\b)(?!string\b)\S/
 // Shorthand: `{ careEmployeeId }` or `, staffId,` copies a same-named variable in.
-const STAFF_SHORTHAND = /[{,]\s*(careEmployeeId|staffId)\s*[,}]/
-const STAFF_VALUE_READ = /\.\s*(careEmployeeId|staffId)\b(?!\s*(!==|===)\s*null)/
+const STAFF_SHORTHAND = /[{,]\s*(careEmployeeId|careEmailHash|staffId)\s*[,}]/
+const STAFF_VALUE_READ = /\.\s*(careEmployeeId|careEmailHash|staffId)\b(?!\s*(!==|===)\s*null)/
 // In a record file, the booking's employee is never read at all.
 const EMPLOYEE_READ = /\bemployeeId\b|\bemployee_id\b/
 
@@ -70,6 +70,8 @@ test('K4-4 planted controls: each staff-id write is caught; null and type declar
     ['lib/wellness/state-rpc.ts', "  const row = { care_employee_id: b.employee }"],
     ['lib/wellness/http.ts', '  return { bookingId, careEmployeeId }'],
     ['lib/wellness/http.ts', '  /* staff */ careEmployeeId: found.employee,'],
+    ['lib/wellness/tokens.ts', '  return { ch: a.careEmailHash }'],
+    ['lib/wellness/http.ts', '    careEmailHash: careEmailHash(secret, staff.email),'],
   ]
   for (const [file, line] of planted) assert.equal(violations(file, line).length, 1, `planted write not caught: ${line}`)
   const clean = [
@@ -87,14 +89,16 @@ test('K4-4 no kiosk product file writes a staff or employee id into a consent or
   assert.deepEqual(hits, [])
 })
 
-test('K4-4b the sealed attempt token carries exactly its six fields, with c null, whatever the caller passes', () => {
+test('K4-4b the sealed attempt token carries exactly its six fields, with c and ch null, whatever the caller passes', () => {
   const SECRET = 'g4-test-secret-g4-test-secret-0000000'
   const now = 1_000_000
-  const caller = { bookingId: 501, emailHash: emailHash(SECRET, 'g@x.co'), careEmployeeId: 12, careEmailHash: null, staffId: 7 }
+  const caller = { bookingId: 501, emailHash: emailHash(SECRET, 'g@x.co'), careEmployeeId: 12, careEmailHash: 'f'.repeat(64), staffId: 7 }
   const { token } = issueAttempt(SECRET, caller, now)
   const payload = unseal(SECRET, 'dmk-attempt-v1', token, now + 1)
   assert.ok(payload, 'the token did not unseal')
   assert.deepEqual(Object.keys(payload).sort(), ['a', 'b', 'c', 'ch', 'e', 'exp'])
   assert.equal(payload.c, null, 'a staff id was sealed into the attempt token')
+  // Main #188 c.6721975894 item 4: a keyed hash of a staff email is a staff identifier under R1.5.
+  assert.equal(payload.ch, null, 'a staff email hash was sealed into the attempt token')
   assert.ok(!JSON.stringify(payload).includes(':12') && !JSON.stringify(payload).includes(':7,'), 'a staff id was sealed under another key')
 })

@@ -149,6 +149,7 @@ test('device cookie and attempt token refuse tampering, expiry and a swapped ema
   assert.equal(a.attemptId, t.attemptId)
   assert.equal(a.bookingId, 501)
   assert.equal(a.careEmployeeId, null, 'G4: a staff id entered the attempt token')
+  assert.equal(a.careEmailHash, null, 'G4: a staff email hash entered the attempt token')
   assert.notEqual(a.emailHash, emailHash(SECRET, 'other@x.co'))
   assert.equal(readAttempt(SECRET, t.token, now + 16 * 60 * 1000), null)
   assert.ok(enrollCodeMatches('code-1234567890abcdef', 'code-1234567890abcdef'))
