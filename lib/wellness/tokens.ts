@@ -48,11 +48,11 @@ export function enrollCodeMatches(expected: string, supplied: unknown): boolean 
 export const emailHash = (secret: string, normalizedEmail: string): string => hmacHex(secret, `dmk-email-v1.${normalizedEmail}`)
 export const careEmailHash = (secret: string, normalizedEmail: string): string => hmacHex(secret, `dmk-care-email-v1.${normalizedEmail}`)
 
-export interface Attempt { attemptId: string; bookingId: number; emailHash: string; careEmployeeId: number | null; careEmailHash: string | null }
+export interface Attempt { attemptId: string; bookingId: number; emailHash: string; careEmployeeId: null; careEmailHash: string | null }
 
 export function issueAttempt(secret: string, a: Omit<Attempt, 'attemptId'>, nowMs: number): { token: string; attemptId: string } {
   const attemptId = newId()
-  return { attemptId, token: seal(secret, ATTEMPT_PURPOSE, { a: attemptId, b: a.bookingId, e: a.emailHash, c: a.careEmployeeId, ch: a.careEmailHash, exp: nowMs + ATTEMPT_LIFETIME_MS }) }
+  return { attemptId, token: seal(secret, ATTEMPT_PURPOSE, { a: attemptId, b: a.bookingId, e: a.emailHash, c: null, ch: a.careEmailHash, exp: nowMs + ATTEMPT_LIFETIME_MS }) }
 }
 
 export function readAttempt(secret: string, token: string | null, nowMs: number): Attempt | null {
@@ -62,7 +62,7 @@ export function readAttempt(secret: string, token: string | null, nowMs: number)
   if (typeof a !== 'string' || typeof b !== 'number' || !Number.isSafeInteger(b) || typeof e !== 'string') return null
   if (c !== null && (typeof c !== 'number' || !Number.isSafeInteger(c))) return null
   if (ch !== null && typeof ch !== 'string') return null
-  return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: c as number | null, careEmailHash: ch as string | null }
+  return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: null, careEmailHash: ch as string | null }
 }
 
 export interface Challenge { challengeId: string; emailHash: string; codeHash: string; expired: boolean }

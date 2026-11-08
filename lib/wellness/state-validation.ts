@@ -53,7 +53,7 @@ function parseIntent(value: unknown): ConsentIntent | null {
     schemaVersion: value.schemaVersion, bookingRef: value.bookingRef, tenantId: value.tenantId,
     calendeskAccountRef: value.calendeskAccountRef, locationId: value.locationId,
     serviceLocationId: value.serviceLocationId, serviceId: value.serviceId, serviceTypeId: value.serviceTypeId,
-    careEmployeeId: value.careEmployeeId, subjectBinding: value.subjectBinding, purpose: value.purpose,
+    careEmployeeId: null, subjectBinding: value.subjectBinding, purpose: value.purpose,
     noticeVersion: value.noticeVersion, processingDecision: value.processingDecision,
     emailResultsDecision: value.emailResultsDecision, careCcDecision: value.careCcDecision,
     guestRecipientRef: value.guestRecipientRef, careRecipientRef: value.careRecipientRef,
