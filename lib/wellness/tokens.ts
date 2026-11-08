@@ -6,7 +6,8 @@
  *   NEXT_PUBLIC token: W-4b withdrew the LV kiosk because its device token was inlined into the page.
  * - **Attempt token** (15 minutes). It binds one booking match to one guest email (a keyed hash,
  *   never the address). The scan cannot swap either. It carries no staff id (G4, Keith's R1.5 rule):
- *   its CARE employee field is always null.
+ *   its CARE employee and CARE email-hash fields are always null
+ *   (a keyed hash of a staff email is a staff identifier: Main #188 c.6721975894).
  *   Its attempt ID is the FacePhys idempotency key.
  * - **Code challenge** (10 minutes). It carries a keyed hash of the 6-digit code emailed to the booking's inbox, never the
  *   code itself, so the page cannot read the code back. Shared durable state stores the opaque challenge ID,
@@ -47,13 +48,12 @@ export function enrollCodeMatches(expected: string, supplied: unknown): boolean 
 }
 
 export const emailHash = (secret: string, normalizedEmail: string): string => hmacHex(secret, `dmk-email-v1.${normalizedEmail}`)
-export const careEmailHash = (secret: string, normalizedEmail: string): string => hmacHex(secret, `dmk-care-email-v1.${normalizedEmail}`)
 
-export interface Attempt { attemptId: string; bookingId: number; emailHash: string; careEmployeeId: null; careEmailHash: string | null }
+export interface Attempt { attemptId: string; bookingId: number; emailHash: string; careEmployeeId: null; careEmailHash: null }
 
 export function issueAttempt(secret: string, a: Omit<Attempt, 'attemptId'>, nowMs: number): { token: string; attemptId: string } {
   const attemptId = newId()
-  return { attemptId, token: seal(secret, ATTEMPT_PURPOSE, { a: attemptId, b: a.bookingId, e: a.emailHash, c: null, ch: a.careEmailHash, exp: nowMs + ATTEMPT_LIFETIME_MS }) }
+  return { attemptId, token: seal(secret, ATTEMPT_PURPOSE, { a: attemptId, b: a.bookingId, e: a.emailHash, c: null, ch: null, exp: nowMs + ATTEMPT_LIFETIME_MS }) }
 }
 
 export function readAttempt(secret: string, token: string | null, nowMs: number): Attempt | null {
@@ -63,7 +63,7 @@ export function readAttempt(secret: string, token: string | null, nowMs: number)
   if (typeof a !== 'string' || typeof b !== 'number' || !Number.isSafeInteger(b) || typeof e !== 'string') return null
   if (c !== null && (typeof c !== 'number' || !Number.isSafeInteger(c))) return null
   if (ch !== null && typeof ch !== 'string') return null
-  return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: null, careEmailHash: ch as string | null }
+  return { attemptId: a, bookingId: b, emailHash: e, careEmployeeId: null, careEmailHash: null }
 }
 
 export interface Challenge { challengeId: string; emailHash: string; codeHash: string; expired: boolean }
